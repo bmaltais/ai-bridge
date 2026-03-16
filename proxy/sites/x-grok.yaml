@@ -1,0 +1,21 @@
+name: x-grok
+url: https://x.com/i/grok
+aliases:
+  - x-grok
+  - grok-x
+
+# Skip start_new_chat: x.com/i/grok redirects to ?conversation=<id> after first send.
+# Navigating to origin (https://x.com) loses the Grok interface. Stay on current page.
+skip_new_chat: true
+
+placeholders:
+  - "Thinking..."
+  - "Generating..."
+  - "Loading..."
+
+selectors:
+  chat_input: 'textarea[placeholder*="Ask anything" i]'
+  submit_button: 'button[aria-label="Grok something"]'
+  # AI message container: r-1wbh5a2+r-11niif6 distinguish AI turns from user turns.
+  # User turns have r-3pj75a instead of r-1wbh5a2. Discovered 2026-03-16 via DOM inspection.
+  last_ai_msg: '.r-1wbh5a2.r-11niif6'
