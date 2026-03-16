@@ -577,12 +577,14 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
 
     async with site_session.lock:
         page = site_session.page
-        if site_session.config.skip_new_chat:
+        if site_session.config.skip_new_chat and not body.chat_url:
             # Cloudflare-protected sites: do not navigate; capture existing content so
             # wait_for_complete_response knows to ignore it and wait for new content.
             init_text = await scraper.get_last_ai_message_text(page, sel)
             log.debug("skip_new_chat: init_text len=%d", len(init_text))
         else:
+            # chat_url provided: always navigate (resume specific conversation).
+            # skip_new_chat=False: normal new-chat flow.
             await scraper.goto_or_start_chat(page, sel, chat_url=body.chat_url)
             init_text = ""
 
