@@ -32,7 +32,10 @@ selectors:
 capabilities:
   new_chat:
     type: button
-    selector: 'button[aria-label="New Chat"]'
+    # x.com/i/grok has no reliable "New Chat" button accessible without side-effects.
+    # invoke_capability routes new_chat via site_config.url navigation instead.
+    # Selector is unused but required by schema — set to chat_input as a safe fallback.
+    selector: 'textarea[placeholder*="Ask anything" i]'
     action: click
-    description: "Starts a new conversation"
-    requires_confirmation: true
+    description: "Start a fresh conversation by navigating to x.com/i/grok"
+    requires_confirmation: false
