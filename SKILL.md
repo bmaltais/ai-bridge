@@ -108,6 +108,28 @@ RESPONSE_TIMEOUT_S=120
 6. GET `/inspect/<name>?write=true` — save heuristic suggestions to the YAML file
 7. GET `/debug/selectors/<name>` — verify selectors match live elements
 
+## Sending Prompts
+
+Prefer `proxy/send.py` over `curl` — single-quoted JSON fails on Windows bash but Python handles encoding correctly on all platforms:
+
+```bash
+# Basic usage
+uv run python proxy/send.py grok "Write a short report on Claude Code"
+
+# With model override
+uv run python proxy/send.py perplexity "What is 2+2?" --model sonar
+
+# Against a non-default port
+uv run python proxy/send.py chatgpt "Hello" --port 9090
+```
+
+`curl` equivalent (only use if you escape the JSON manually):
+```bash
+curl -X POST http://127.0.0.1:8080/v1/proxy \
+  -H "Content-Type: application/json" \
+  -d "{\"site\": \"perplexity\", \"prompt\": \"What is 2+2?\"}"
+```
+
 ## Debugging
 
 ```bash
@@ -117,10 +139,8 @@ curl http://127.0.0.1:8080/debug/selectors/perplexity
 # Get DOM snapshot for Claude to analyze
 curl http://127.0.0.1:8080/inspect/perplexity
 
-# Test a specific site
-curl -X POST http://127.0.0.1:8080/v1/proxy \
-  -H "Content-Type: application/json" \
-  -d '{"site": "perplexity", "prompt": "What is 2+2?"}'
+# Test a specific site (use send.py on Windows — see Sending Prompts above)
+uv run python proxy/send.py perplexity "What is 2+2?"
 ```
 
 ## Headless vs Headed
