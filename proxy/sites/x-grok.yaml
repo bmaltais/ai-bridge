@@ -8,10 +8,19 @@ aliases:
 # Navigating to origin (https://x.com) loses the Grok interface. Stay on current page.
 skip_new_chat: true
 
+# Enable DOM-scan fallback: x.com uses hashed atomic CSS classes that may change between
+# deploys. If the primary last_ai_msg selector (.r-1wbh5a2.r-11niif6) stops matching,
+# streaming.py falls back to finding leaf elements with >100 chars inside <main>.
+fallback_detection: true
+
 placeholders:
   - "Thinking..."
   - "Generating..."
   - "Loading..."
+  # Grok shows "Thinking about <topic>\n<one-line summary>" in the last_ai_msg element
+  # before the real response streams. Caught by streaming.py _is_complete() startswith
+  # guard — listed here for documentation only (exact-match placeholders won't fire).
+  - "Thinking about"
 
 selectors:
   chat_input: 'textarea[placeholder*="Ask anything" i]'
