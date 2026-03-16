@@ -44,11 +44,14 @@ def _is_complete(text: str, extra_placeholders: frozenset[str] = frozenset()) ->
     # a loading placeholder so we keep polling.
     if t.startswith("Searching") and "\n" not in t and len(t) < 80:
         return False
-    # Grok (x.com/i/grok) shows a "Thinking about <topic>\n<one-line summary>" preview
-    # in the last_ai_msg element before the actual response starts streaming.  This is
-    # multi-line so the single-line Searching guard doesn't catch it.  No real response
-    # starts with "Thinking about", so this guard is safe unconditionally.
-    if t.startswith("Thinking about"):
+    # Grok (x.com/i/grok) shows a "Thinking [about <topic>]\n<one-line summary>" preview
+    # in the last_ai_msg element before the actual response starts streaming.  Variants:
+    #   "Thinking about the user's request\n<summary>"  — complex questions
+    #   "Thinking\n<summary>"                           — simpler questions
+    # Both are multi-line, so the single-line Searching guard doesn't catch them.
+    # The exact strings "Thinking" / "Thinking..." are already in _BUILTIN_PLACEHOLDERS
+    # but only as exact matches.  This startswith guard covers the multi-line variants.
+    if t.startswith("Thinking") and "\n" in t and t.index("\n") < 30:
         return False
     return True
 
