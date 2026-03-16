@@ -31,6 +31,11 @@ def _is_complete(text: str, extra_placeholders: frozenset[str] = frozenset()) ->
     # If the entire text is just that badge line, the actual content hasn't arrived yet.
     if t.startswith("Using ") and "\n" not in t and len(t) < 50:
         return False
+    # Some sites show a transient search indicator, e.g. "Searching Write a short one..."
+    # before the real response arrives.  Treat any single-line "Searching …" fragment as
+    # a loading placeholder so we keep polling.
+    if t.startswith("Searching") and "\n" not in t and len(t) < 80:
+        return False
     return True
 
 

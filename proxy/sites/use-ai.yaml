@@ -11,9 +11,5 @@ placeholders: []
 # The generic selectors in scraper.py cover most cases.
 # Uncomment and fill in only if the generic selectors break for this site.
 #
-# selectors:
-#   chat_input: '[role="textbox"]'
-#   submit_button: 'button[type="submit"]'
-#   last_ai_msg: '[data-role="assistant"]'
-#   thinking_spinner: '[class*="spinner"]'
-#   new_chat: 'a[href*="/chat/new"]'
+selectors:
+  last_ai_msg: '[data-role="assistant"]'

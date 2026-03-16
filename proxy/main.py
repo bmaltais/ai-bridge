@@ -16,9 +16,9 @@ Exposes:
 """
 
 import logging
+import _thread
 import io
 import os
-import signal
 import sys
 import threading
 import time
@@ -718,7 +718,7 @@ def _start_watchdog(watchdog_pid: int) -> None:
             if not _pid_alive(watchdog_pid):
                 log.info("Watchdog PID %d is gone — shutting down proxy.", watchdog_pid)
                 _PID_FILE.unlink(missing_ok=True)
-                os.kill(os.getpid(), signal.SIGTERM)
+                _thread.interrupt_main()  # raises KeyboardInterrupt in main thread; uvicorn handles graceful shutdown on all platforms
                 return
 
     t = threading.Thread(target=_watch, daemon=True)

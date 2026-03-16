@@ -41,7 +41,7 @@ def main() -> None:
         with urllib.request.urlopen(req, timeout=180) as resp:
             body = json.loads(resp.read().decode())
             text = body.get("text") or body.get("response") or json.dumps(body, indent=2)
-            print(text)
+            sys.stdout.buffer.write((text + "\n").encode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode()
         print(f"HTTP {exc.code}: {detail}", file=sys.stderr)
