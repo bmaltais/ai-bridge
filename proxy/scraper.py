@@ -219,3 +219,24 @@ async def start_new_chat(page: Page, sel: SiteSelectors = _DEFAULT) -> None:
         await page.wait_for_selector(sel.chat_input, timeout=30_000)
     except Exception as exc:
         log.warning("start_new_chat failed: %s", exc)
+
+
+async def goto_or_start_chat(
+    page: Page, sel: SiteSelectors = _DEFAULT, chat_url: str | None = None
+) -> None:
+    """Resume an existing chat by URL, or start a fresh chat if no URL is given.
+
+    Drop-in replacement for start_new_chat() — callers that pass only (page, sel)
+    behave identically to before.  Pass chat_url to resume a thread.
+    """
+    if chat_url:
+        try:
+            if not chat_url.startswith("https://"):
+                raise ValueError(f"chat_url must start with https://, got: {chat_url!r}")
+            log.info("goto_or_start_chat: resuming %s", chat_url)
+            await page.goto(chat_url, wait_until="domcontentloaded", timeout=45_000)
+            await page.wait_for_selector(sel.chat_input, timeout=15_000)
+            return  # successfully resumed
+        except Exception as exc:
+            log.warning("goto_or_start_chat: failed to resume %s (%s) — falling back to new chat", chat_url, exc)
+    await start_new_chat(page, sel)

@@ -545,6 +545,7 @@ class ProxyRequest(BaseModel):
     model: str | None = (
         None  # friendly name from site's models map, e.g. "claude-sonnet"
     )
+    chat_url: str | None = None  # resume existing chat thread; if None, starts new chat
 
 
 @app.post("/v1/proxy")
@@ -582,7 +583,7 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
             init_text = await scraper.get_last_ai_message_text(page, sel)
             log.debug("skip_new_chat: init_text len=%d", len(init_text))
         else:
-            await scraper.start_new_chat(page, sel)
+            await scraper.goto_or_start_chat(page, sel, chat_url=body.chat_url)
             init_text = ""
 
         if body.model:
@@ -604,7 +605,7 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
             page, sel, extra_placeholders, init_text=init_text
         )
 
-    return {"site": body.site, "model": body.model, "text": text}
+    return {"site": body.site, "model": body.model, "text": text, "chat_url": page.url}
 
 
 # ---------------------------------------------------------------------------

@@ -5,11 +5,12 @@ Fixes the Windows bash curl quoting issue — JSON encoding is handled by Python
 so no shell quoting quirks.
 
 Usage:
-    uv run python proxy/send.py <site> <prompt> [--model MODEL] [--host HOST] [--port PORT]
+    uv run python proxy/send.py <site> <prompt> [--model MODEL] [--chat-url URL] [--host HOST] [--port PORT]
 
 Examples:
     uv run python proxy/send.py grok "Write a short report on Claude Code"
     uv run python proxy/send.py perplexity "What is 2+2?" --model sonar
+    uv run python proxy/send.py grok "Continue our discussion" --chat-url https://grok.com/c/abc123
     uv run python proxy/send.py chatgpt "Hello" --port 9090
 """
 
@@ -25,6 +26,8 @@ def main() -> None:
     parser.add_argument("site", help="Site name (grok, perplexity, chatgpt, …)")
     parser.add_argument("prompt", help="Prompt to send")
     parser.add_argument("--model", default=None, help="Model alias (optional)")
+    parser.add_argument("--chat-url", default=None, dest="chat_url",
+                        help="Resume an existing chat by URL (e.g. https://grok.com/c/<uuid>)")
     parser.add_argument("--host", default="127.0.0.1", help="Proxy host (default: 127.0.0.1)")
     parser.add_argument("--port", default=8080, type=int, help="Proxy port (default: 8080)")
     args = parser.parse_args()
@@ -32,6 +35,8 @@ def main() -> None:
     payload: dict = {"site": args.site, "prompt": args.prompt}
     if args.model:
         payload["model"] = args.model
+    if args.chat_url:
+        payload["chat_url"] = args.chat_url
 
     url = f"http://{args.host}:{args.port}/v1/proxy"
     data = json.dumps(payload).encode()
@@ -42,6 +47,8 @@ def main() -> None:
             body = json.loads(resp.read().decode())
             text = body.get("text") or body.get("response") or json.dumps(body, indent=2)
             sys.stdout.buffer.write((text + "\n").encode("utf-8"))
+            if body.get("chat_url"):
+                print(f"[chat_url] {body['chat_url']}", file=sys.stderr)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode()
         print(f"HTTP {exc.code}: {detail}", file=sys.stderr)
