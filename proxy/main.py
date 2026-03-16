@@ -19,6 +19,7 @@ import logging
 import io
 import os
 import signal
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -193,12 +194,18 @@ async def session_status(site: str):
     """Return whether a site session is waiting for login."""
     try:
         from proxy.site_config import SiteConfig
+
         key = SiteConfig.find(site, _SITES_DIR).name
     except Exception:
         key = site
     if key in site_manager._sessions:
         sess = site_manager._sessions[key].session
-        return {"site": site, "canonical": key, "login_pending": sess.login_pending, "ready": sess.is_ready}
+        return {
+            "site": site,
+            "canonical": key,
+            "login_pending": sess.login_pending,
+            "ready": sess.is_ready,
+        }
     return {"site": site, "login_pending": False, "ready": False, "initialized": False}
 
 
@@ -210,6 +217,7 @@ async def session_notify_login(site: str):
     """
     try:
         from proxy.site_config import SiteConfig
+
         key = SiteConfig.find(site, _SITES_DIR).name
     except Exception:
         key = site
@@ -534,7 +542,9 @@ def _write_selectors_to_yaml(yaml_path: Path, suggestions: dict) -> None:
 class ProxyRequest(BaseModel):
     site: str
     prompt: str
-    model: str | None = None  # friendly name from site's models map, e.g. "claude-sonnet"
+    model: str | None = (
+        None  # friendly name from site's models map, e.g. "claude-sonnet"
+    )
 
 
 @app.post("/v1/proxy")
@@ -551,7 +561,9 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
         raise HTTPException(status_code=404, detail=str(exc))
 
     if await raw.is_disconnected():
-        log.info("Client disconnected after session init for site=%s — aborting", body.site)
+        log.info(
+            "Client disconnected after session init for site=%s — aborting", body.site
+        )
         raise HTTPException(status_code=499, detail="Client disconnected")
 
     if not site_session.is_ready:
@@ -576,13 +588,21 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
         if body.model:
             model_label = site_session.config.models.get(body.model)
             if model_label:
-                await scraper.select_model(page, model_label, site_session.config.model_selector or "")
+                await scraper.select_model(
+                    page, model_label, site_session.config.model_selector or ""
+                )
             else:
-                log.warning("Unknown model %r for site %r — using default", body.model, body.site)
+                log.warning(
+                    "Unknown model %r for site %r — using default",
+                    body.model,
+                    body.site,
+                )
 
         await scraper.type_message(page, body.prompt, sel)
         await scraper.submit_message(page, sel)
-        text = await streaming.wait_for_complete_response(page, sel, extra_placeholders, init_text=init_text)
+        text = await streaming.wait_for_complete_response(
+            page, sel, extra_placeholders, init_text=init_text
+        )
 
     return {"site": body.site, "model": body.model, "text": text}
 
@@ -614,6 +634,7 @@ _PID_FILE = Path.home() / ".claude" / "ai-bridge" / "server.pid"
 
 def _port_in_use(host: str, port: int) -> bool:
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex((host, port)) == 0
@@ -622,6 +643,7 @@ def _port_in_use(host: str, port: int) -> bool:
 def _is_healthy(host: str, port: int) -> bool:
     try:
         import urllib.request
+
         with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=3) as r:
             return r.status == 200
     except Exception:
@@ -637,24 +659,43 @@ def _read_pid() -> int | None:
 
 def _write_pid() -> None:
     import os
+
     _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PID_FILE.write_text(str(os.getpid()))
 
 
 def _kill_pid(pid: int) -> None:
     import subprocess, sys
+
     if sys.platform == "win32":
         subprocess.call(
             ["powershell", "-Command", f"Stop-Process -Id {pid} -Force"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     else:
-        subprocess.call(["kill", "-9", str(pid)],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.call(
+            ["kill", "-9", str(pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def _pid_alive(pid: int) -> bool:
     """Return True if the given PID is still running."""
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        exit_code = ctypes.c_ulong()
+        kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        kernel32.CloseHandle(handle)
+        return exit_code.value == STILL_ACTIVE
     try:
         os.kill(pid, 0)
         return True
@@ -668,7 +709,10 @@ def _start_watchdog(watchdog_pid: int) -> None:
     """Start a daemon thread that exits the proxy when watchdog_pid dies."""
 
     def _watch():
-        log.info("Watchdog monitoring PID %d — proxy will exit when that process ends.", watchdog_pid)
+        log.info(
+            "Watchdog monitoring PID %d — proxy will exit when that process ends.",
+            watchdog_pid,
+        )
         while True:
             time.sleep(10)
             if not _pid_alive(watchdog_pid):
@@ -689,27 +733,39 @@ def run():
         if _is_healthy(host, port):
             log.info(
                 "ai-bridge already running and healthy at http://%s:%d — reusing it.",
-                host, port,
+                host,
+                port,
             )
             sys.exit(0)
 
         # Port is occupied but not healthy.
         try:
-            current_pid = int(
-                __import__("subprocess").check_output(
-                    ["powershell", "-Command",
-                     f"(Get-NetTCPConnection -LocalPort {port} -State Listen "
-                     f"-ErrorAction SilentlyContinue).OwningProcess"],
-                    text=True, stderr=__import__("subprocess").DEVNULL,
-                ).strip()
-            ) if sys.platform == "win32" else None
+            current_pid = (
+                int(
+                    __import__("subprocess")
+                    .check_output(
+                        [
+                            "powershell",
+                            "-Command",
+                            f"(Get-NetTCPConnection -LocalPort {port} -State Listen "
+                            f"-ErrorAction SilentlyContinue).OwningProcess",
+                        ],
+                        text=True,
+                        stderr=__import__("subprocess").DEVNULL,
+                    )
+                    .strip()
+                )
+                if sys.platform == "win32"
+                else None
+            )
         except Exception:
             current_pid = None
 
         if saved_pid and current_pid and saved_pid == current_pid:
             log.warning(
                 "Port %d has a frozen ai-bridge process (PID %d) — killing it.",
-                port, saved_pid,
+                port,
+                saved_pid,
             )
             _kill_pid(saved_pid)
             time.sleep(1)
@@ -717,7 +773,8 @@ def run():
             log.error(
                 "Port %d is occupied by another application (PID %s). "
                 "Change PORT in .env to avoid conflicts.",
-                port, current_pid or "unknown",
+                port,
+                current_pid or "unknown",
             )
             sys.exit(1)
 

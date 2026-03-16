@@ -21,8 +21,11 @@ uv run playwright install chromium   # headed mode
 uv run patchright install chromium   # headless/stealth mode (Cloudflare bypass)
 
 # Start the server (defaults: 127.0.0.1:8080)
-# Pass WATCHDOG_PID so the proxy exits automatically when this session ends
-WATCHDOG_PID=$$ uv run python -m proxy.main
+# Pass WATCHDOG_PID=<VS Code PID> so the proxy exits when VS Code closes.
+# On Windows, get the VS Code PID first:
+#   powershell -Command "Get-Process Code | Sort-Object Id | Select-Object -First 1 -ExpandProperty Id"
+# Then start the proxy:
+WATCHDOG_PID=<vscode_pid> nohup uv run python -m proxy.main > ~/.claude/ai-bridge/proxy.log 2>&1 &
 ```
 
 ## Session Storage (Cookies)
