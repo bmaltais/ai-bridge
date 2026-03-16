@@ -44,7 +44,6 @@ capabilities:
     # Confirmed via DOM inspection 2026-03-16: button[aria-label="Auto"] opens a
     # [role="menuitem"] dropdown — NOT [role="option"]. scraper.select_model() now
     # handles both. Available options confirmed: Auto, Fast, Expert.
-    # Grok 4.2 beta not visible on x.com/i/grok — may require grok.com.
     selector: 'button[aria-label="Auto"]'
     action: click
     description: "Switch Grok response mode (Auto / Fast / Expert)"
@@ -55,3 +54,13 @@ capabilities:
         label: "Fast"
       - value: "Expert"
         label: "Expert"
+  grok_420_beta:
+    type: toggle
+    # Confirmed via DOM inspection 2026-03-16 (user demonstrated in bridge browser).
+    # The toggle is input[role="switch"] inside the Auto dropdown — only visible when
+    # the dropdown is open. Selector is stable (role attribute, not hashed class).
+    # Current state read via: document.querySelector('input[role="switch"]').checked
+    # To toggle: open dropdown (button[aria-label="Auto"]) then click the switch.
+    selector: 'input[role="switch"]'
+    action: toggle
+    description: "Enable/disable Grok 4.20 Beta (Early Access) — requires dropdown open first"

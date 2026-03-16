@@ -262,6 +262,21 @@ async def invoke_capability(
             raise ValueError("model_selector requires a value (model label)")
         await select_model(page, str(value), cap.selector)
         return
+    if cap_name == "grok_420_beta":
+        # Toggle is inside the Auto dropdown — must open it first.
+        sel = SiteSelectors.from_config(site_config)
+        model_cap = site_config.capabilities.get("model_selector")
+        if model_cap:
+            btn = page.locator(model_cap.selector).first
+            await btn.wait_for(state="visible", timeout=5_000)
+            await btn.click()
+            await page.wait_for_timeout(500)
+        toggle = page.locator(cap.selector).first
+        await toggle.wait_for(state="attached", timeout=3_000)
+        await toggle.evaluate("el => { el.click(); el.dispatchEvent(new Event('change', {bubbles: true})); }")
+        log.info("grok_420_beta toggled")
+        await page.keyboard.press("Escape")
+        return
 
     # Generic fallback: dispatch by action type
     elem = await page.wait_for_selector(cap.selector, timeout=10_000)
