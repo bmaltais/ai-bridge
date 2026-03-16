@@ -1,7 +1,7 @@
 """
 Playwright browser session manager.
 
-Singleton that owns the browser for the lifetime of the proxy.
+Owns a browser for the lifetime of a site session.
 All browser interactions are serialized through an asyncio.Lock.
 """
 
@@ -10,7 +10,6 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import AsyncIterator
 
 from playwright.async_api import (
     Browser,
@@ -37,9 +36,7 @@ CHAT_INPUT_SELECTOR = (
 
 
 class BrowserSession:
-    """Singleton Playwright session with cookie persistence."""
-
-    _instance: "BrowserSession | None" = None
+    """Playwright session with cookie persistence for one site."""
 
     def __init__(
         self,
@@ -251,16 +248,3 @@ class BrowserSession:
         assert self._context
         self._cookies_path.parent.mkdir(parents=True, exist_ok=True)
         await self._context.storage_state(path=str(self._cookies_path))
-
-    # ------------------------------------------------------------------
-    # Singleton accessor
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def get(cls) -> "BrowserSession":
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-
-browser_session = BrowserSession.get()

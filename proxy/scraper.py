@@ -63,13 +63,6 @@ _NEW_CHAT = (
 # Login page indicator (narrow — used by browser.py auth check)
 LOGIN_INDICATOR = 'input[type="email"], input[name="email"]'
 
-# Module-level aliases kept for backward compatibility (browser.py uses CHAT_INPUT)
-CHAT_INPUT = _CHAT_INPUT
-SUBMIT_BUTTON = _SUBMIT_BUTTON
-LAST_AI_MSG = _LAST_AI_MSG
-THINKING_SPINNER = _THINKING_SPINNER
-NEW_CHAT = _NEW_CHAT
-
 
 # ---------------------------------------------------------------------------
 # SiteSelectors — merged, always-resolved selector set

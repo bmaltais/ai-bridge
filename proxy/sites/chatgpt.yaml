@@ -6,6 +6,6 @@ placeholders:
   - "Searching…"
 
 selectors:
-  chat_input: 'div[role="textbox"]'
+  chat_input: '[role="textbox"]'
   submit_button: 'button[data-testid="send-button"]'
   last_ai_msg: '[data-message-author-role="assistant"]'
