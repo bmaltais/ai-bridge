@@ -221,6 +221,69 @@ async def start_new_chat(page: Page, sel: SiteSelectors = _DEFAULT) -> None:
         log.warning("start_new_chat failed: %s", exc)
 
 
+async def invoke_capability(
+    page: Page,
+    cap_name: str,
+    site_config,  # SiteConfig — avoid circular import
+    value=None,
+) -> None:
+    """Invoke a named UI capability (new_chat, model_selector, etc.).
+
+    Known capabilities route to existing helpers for consistency.
+    Unknown capabilities are dispatched generically via action type.
+    """
+    from proxy.site_config import CapabilityConfig  # local import to avoid cycle
+
+    caps: dict[str, CapabilityConfig] = site_config.capabilities
+    if cap_name not in caps:
+        raise ValueError(
+            f"Capability {cap_name!r} not found for site {site_config.name!r}. "
+            f"Available: {list(caps)}"
+        )
+    cap = caps[cap_name]
+
+    # Route known capabilities to existing helpers
+    if cap_name == "new_chat":
+        sel = SiteSelectors.from_config(site_config)
+        await start_new_chat(page, sel)
+        return
+    if cap_name == "model_selector":
+        if value is None:
+            raise ValueError("model_selector requires a value (model label)")
+        await select_model(page, str(value), cap.selector)
+        return
+
+    # Generic fallback: dispatch by action type
+    elem = await page.wait_for_selector(cap.selector, timeout=10_000)
+    if elem is None:
+        raise RuntimeError(f"Selector not found for capability {cap_name!r}: {cap.selector}")
+
+    if cap.action == "click":
+        await elem.click()
+    elif cap.action == "fill":
+        if value is None:
+            raise ValueError(f"fill action requires a value for {cap_name!r}")
+        await elem.fill(str(value))
+    elif cap.action == "set_value":
+        if value is None:
+            raise ValueError(f"set_value action requires a value for {cap_name!r}")
+        await elem.evaluate("(el, v) => { el.value = v; el.dispatchEvent(new Event('input')); }", value)
+    elif cap.action == "select_by_value":
+        if value is None:
+            raise ValueError(f"select_by_value action requires a value for {cap_name!r}")
+        await elem.select_option(value=str(value))
+    elif cap.action == "select_by_label":
+        if value is None:
+            raise ValueError(f"select_by_label action requires a value for {cap_name!r}")
+        await elem.select_option(label=str(value))
+    elif cap.action == "toggle":
+        await elem.evaluate("el => { el.checked = !el.checked; el.dispatchEvent(new Event('change')); }")
+    else:
+        raise ValueError(f"Unsupported action {cap.action!r} for capability {cap_name!r}")
+
+    log.info("Capability %r invoked (action=%s, value=%r)", cap_name, cap.action, value)
+
+
 async def goto_or_start_chat(
     page: Page, sel: SiteSelectors = _DEFAULT, chat_url: str | None = None
 ) -> None:

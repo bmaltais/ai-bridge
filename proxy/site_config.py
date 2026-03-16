@@ -13,12 +13,40 @@ Selector overrides are optional — the generic selectors in scraper.py work for
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 # Cookies live outside the repo — never committed, never pushed.
 # Default: ~/.claude/ai-bridge/cookies/<site>.json
 _COOKIES_DIR = Path.home() / ".claude" / "ai-bridge" / "cookies"
+
+
+@dataclass
+class CapabilityConfig:
+    """One named UI control a site exposes (button, select, slider, etc.)."""
+
+    type: str                            # button | select | input | textarea | slider | toggle
+    selector: str                        # CSS selector for the element
+    action: str                          # click | fill | set_value | select_by_value | select_by_label | toggle
+    description: str = ""
+    options: list[dict[str, str]] = field(default_factory=list)  # [{value, label}, ...]
+    range: list[float] = field(default_factory=list)             # [min, max] for sliders
+    step: float | None = None
+    requires_confirmation: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CapabilityConfig":
+        return cls(
+            type=data["type"],
+            selector=data["selector"],
+            action=data["action"],
+            description=data.get("description", ""),
+            options=data.get("options", []),
+            range=data.get("range", []),
+            step=data.get("step"),
+            requires_confirmation=data.get("requires_confirmation", False),
+        )
 
 
 @dataclass
@@ -56,6 +84,10 @@ class SiteConfig:
     # Friendly-name → picker-label mapping for model selection
     models: dict[str, str] = field(default_factory=dict)
 
+    # Named UI capabilities (new_chat, model_selector, temperature, etc.)
+    # Keyed by capability name; loaded from the 'capabilities:' YAML section.
+    capabilities: dict[str, "CapabilityConfig"] = field(default_factory=dict)
+
     @classmethod
     def load(cls, path: Path) -> "SiteConfig":
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -77,6 +109,10 @@ class SiteConfig:
             fallback_detection=data.get("fallback_detection", False),
             aliases=data.get("aliases", []),
             models=data.get("models", {}),
+            capabilities={
+                k: CapabilityConfig.from_dict(v)
+                for k, v in data.get("capabilities", {}).items()
+            },
         )
 
     @classmethod

@@ -28,3 +28,11 @@ selectors:
   # AI message container: r-1wbh5a2+r-11niif6 distinguish AI turns from user turns.
   # User turns have r-3pj75a instead of r-1wbh5a2. Discovered 2026-03-16 via DOM inspection.
   last_ai_msg: '.r-1wbh5a2.r-11niif6'
+
+capabilities:
+  new_chat:
+    type: button
+    selector: 'button[aria-label="New Chat"]'
+    action: click
+    description: "Starts a new conversation"
+    requires_confirmation: true

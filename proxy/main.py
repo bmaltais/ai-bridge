@@ -546,6 +546,13 @@ class ProxyRequest(BaseModel):
         None  # friendly name from site's models map, e.g. "claude-sonnet"
     )
     chat_url: str | None = None  # resume existing chat thread; if None, starts new chat
+    new_conversation: bool | None = None  # True=force new chat, False=never, None=heuristic
+
+
+class ControlRequest(BaseModel):
+    site: str
+    capability: str          # e.g. "new_chat", "model_selector"
+    value: str | float | None = None  # required for fill/select/set_value actions
 
 
 @app.post("/v1/proxy")
@@ -580,6 +587,16 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
         for attempt in range(1, 3):  # max 2 attempts: action → recover → retry
             try:
                 page = site_session.page
+
+                # new_conversation: explicit flag > heuristic (no chat_url = fresh context wanted)
+                want_new = body.new_conversation
+                if want_new is None:
+                    want_new = not body.chat_url  # heuristic: no URL means new thread
+
+                if want_new and "new_chat" in site_session.config.capabilities:
+                    log.info("Invoking new_chat capability before prompt")
+                    await scraper.invoke_capability(page, "new_chat", site_session.config)
+
                 if site_session.config.skip_new_chat and not body.chat_url:
                     # Cloudflare-protected sites: do not navigate; capture existing content so
                     # wait_for_complete_response knows to ignore it and wait for new content.
@@ -636,6 +653,66 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
         )
 
     return {"site": body.site, "model": body.model, "text": text, "chat_url": page.url}
+
+
+# ---------------------------------------------------------------------------
+# Capability API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/capabilities/{site}")
+async def get_capabilities(site: str):
+    """Return the capabilities dict from a site's YAML config (no DOM scan).
+
+    Call: curl http://127.0.0.1:8080/v1/capabilities/x-grok
+    """
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    caps = site_session.config.capabilities
+    return {
+        "site": site,
+        "capabilities": {
+            name: {
+                "type": cap.type,
+                "action": cap.action,
+                "description": cap.description,
+                "options": cap.options,
+                "requires_confirmation": cap.requires_confirmation,
+            }
+            for name, cap in caps.items()
+        },
+    }
+
+
+@app.post("/v1/control")
+async def control_capability(body: ControlRequest):
+    """Invoke a named capability on a site's browser session.
+
+    Call: curl -X POST http://127.0.0.1:8080/v1/control \\
+            -H 'Content-Type: application/json' \\
+            -d '{"site": "x-grok", "capability": "new_chat"}'
+    """
+    log.info("POST /v1/control site=%s capability=%s value=%r", body.site, body.capability, body.value)
+    try:
+        site_session = await site_manager.get(body.site)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if not site_session.is_ready:
+        raise HTTPException(status_code=503, detail=f"Session for {body.site!r} not ready")
+
+    async with site_session.lock:
+        try:
+            await scraper.invoke_capability(
+                site_session.page, body.capability, site_session.config, body.value
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Capability invocation failed: {exc}")
+
+    return {"status": "ok", "site": body.site, "capability": body.capability, "chat_url": site_session.page.url}
 
 
 # ---------------------------------------------------------------------------
