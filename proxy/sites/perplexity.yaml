@@ -1,0 +1,31 @@
+name: perplexity
+url: https://www.perplexity.ai
+
+# Perplexity shows "Thinking" in the answer block while generating.
+# The built-in placeholder set already covers this, but listed here for clarity.
+placeholders:
+  - "Thinking"
+  - "Researching"
+
+selectors:
+  chat_input: '[role="textbox"]'
+  submit_button: 'button[type="submit"]'
+  # Present only when logged into an account (not anonymous)
+  auth_check: '[aria-label="Notifications"]'
+  # Perplexity renders the answer as markdown in div#markdown-content-0
+  last_ai_msg: 'div[id^="markdown-content"]'
+  # Opens the model picker dropdown in the search bar
+  model_selector: 'button[aria-label="Model"]'
+  # thinking_spinner: not needed — placeholder detection handles it
+  # new_chat: not set — page reload fallback works (navigates back to home)
+
+# Model names as they appear in the picker (used by ?model= query param)
+# Pro account required for all except Sonar/Best.
+models:
+  best: "Best"
+  sonar: "Sonar"
+  gpt: "GPT-5.4"
+  gemini: "Gemini 3.1 Pro"
+  claude-sonnet: "Claude Sonnet 4.6"
+  claude-opus: "Claude Opus 4.6"
+  nemotron: "Nemotron 3 Super"

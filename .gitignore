@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Session data — NEVER commit cookies or tokens.
+# Cookies are stored at ~/.claude/ai-bridge/cookies/ (outside this repo).
+data/
+*.log
+
+# Local config
+.env
+
+# IDE
+.vscode/

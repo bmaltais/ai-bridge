@@ -1,0 +1,28 @@
+# Template for adding a new site.
+# Copy this file to proxy/sites/<site-name>.yaml and fill in the fields.
+#
+# Onboarding a new site:
+#   1. Fill in name and url below
+#   2. Start the server with HEADLESS=false in .env
+#   3. POST /v1/proxy {"site": "<name>", "prompt": "hello"} — browser opens, log in
+#   4. GET  /inspect/<name>              — auto-generate selector config via LLM
+#   5. GET  /inspect/<name>?write=true   — save suggestions directly to this file
+#   6. GET  /debug/selectors/<name>      — verify selectors match live elements
+#
+name: my-site
+url: https://example.com/chat
+# cookies_path: /custom/path/my-site.json   # default: ~/.claude/ai-bridge/cookies/<name>.json
+
+# Transient texts the site shows while generating — add site-specific ones here.
+# placeholders:
+#   - "Generating..."
+#   - "Loading..."
+
+# CSS selector overrides — only needed if generic selectors fail.
+# Run /inspect/<name> to auto-generate these.
+# selectors:
+#   chat_input: 'textarea#prompt'
+#   submit_button: 'button#send'
+#   last_ai_msg: '.response:last-child'
+#   thinking_spinner: '.spinner'
+#   new_chat: 'a[href="/chat/new"]'

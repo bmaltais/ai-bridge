@@ -1,0 +1,19 @@
+name: use-ai
+url: https://use.ai
+# cookies_path is not set — uses default: ~/.claude/ai-bridge/cookies/use-ai.json
+
+# Site-specific placeholder texts shown while the AI is still generating.
+# The proxy will not declare the response complete while only these texts are visible.
+# The built-in set (Thinking..., Thinking, ..., "") is always included.
+placeholders: []
+
+# Selector overrides are optional.
+# The generic selectors in scraper.py cover most cases.
+# Uncomment and fill in only if the generic selectors break for this site.
+#
+# selectors:
+#   chat_input: '[role="textbox"]'
+#   submit_button: 'button[type="submit"]'
+#   last_ai_msg: '[data-role="assistant"]'
+#   thinking_spinner: '[class*="spinner"]'
+#   new_chat: 'a[href*="/chat/new"]'

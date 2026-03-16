@@ -1,0 +1,13 @@
+name: x-ai
+url: https://grok.com
+aliases:
+  - grok
+
+placeholders:
+  - "Thinking..."
+  - "Generating..."
+
+selectors:
+  chat_input: 'div.ProseMirror[contenteditable="true"]'
+  submit_button: 'button[type="submit"]'
+  last_ai_msg: 'div[class*="items-start"] div.message-bubble'

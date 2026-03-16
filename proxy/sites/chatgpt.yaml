@@ -1,0 +1,11 @@
+name: chatgpt
+url: https://chatgpt.com
+
+placeholders:
+  - "ChatGPT is thinking…"
+  - "Searching…"
+
+selectors:
+  chat_input: 'div[role="textbox"]'
+  submit_button: 'button[data-testid="send-button"]'
+  last_ai_msg: '[data-message-author-role="assistant"]'
