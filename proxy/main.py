@@ -17,6 +17,10 @@ Exposes:
 
 import logging
 import io
+import os
+import signal
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -649,9 +653,35 @@ def _kill_pid(pid: int) -> None:
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def run():
-    import os, sys, time
+def _pid_alive(pid: int) -> bool:
+    """Return True if the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True  # process exists, we just lack permission to signal it
+    except OSError:
+        return False
 
+
+def _start_watchdog(watchdog_pid: int) -> None:
+    """Start a daemon thread that exits the proxy when watchdog_pid dies."""
+
+    def _watch():
+        log.info("Watchdog monitoring PID %d — proxy will exit when that process ends.", watchdog_pid)
+        while True:
+            time.sleep(10)
+            if not _pid_alive(watchdog_pid):
+                log.info("Watchdog PID %d is gone — shutting down proxy.", watchdog_pid)
+                _PID_FILE.unlink(missing_ok=True)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+
+    t = threading.Thread(target=_watch, daemon=True)
+    t.start()
+
+
+def run():
     host, port = settings.host, settings.port
 
     if _port_in_use(host, port):
@@ -692,6 +722,16 @@ def run():
             sys.exit(1)
 
     _write_pid()
+
+    # Start watchdog: monitor the process that launched us.
+    # Pass WATCHDOG_PID=<pid> to override (e.g. the Claude Code process PID).
+    # Defaults to the direct parent process.
+    watchdog_pid = int(os.environ.get("WATCHDOG_PID", "0")) or os.getppid()
+    if watchdog_pid > 1:  # PID 1 = system/init, always alive — skip watchdog
+        _start_watchdog(watchdog_pid)
+    else:
+        log.info("No valid watchdog PID — proxy will run until manually stopped.")
+
     log.info("Proxy ready on http://%s:%d", host, port)
     uvicorn.run("proxy.main:app", host=host, port=port, log_level="info")
 

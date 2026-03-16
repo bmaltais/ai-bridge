@@ -8,6 +8,7 @@ Usage:
 """
 
 import asyncio
+import socket
 import subprocess
 import sys
 import time
@@ -17,6 +18,8 @@ from pathlib import Path
 import httpx
 
 PROXY_URL = "http://127.0.0.1:8080"
+PROXY_HOST = "127.0.0.1"
+PROXY_PORT = 8080
 SITES = ["use-ai", "perplexity", "x-ai", "chatgpt"]
 PROMPT = "Reply with the word PONG and nothing else."
 PER_SITE_TIMEOUT = 150  # > server-side response_timeout_s (120s)
@@ -26,6 +29,37 @@ def _stream_logs(proc, log_lines):
     for line in iter(proc.stdout.readline, b""):
         decoded = line.decode(errors="replace").rstrip()
         log_lines.append(decoded)
+
+
+def _kill_proc_tree(proc: subprocess.Popen) -> None:
+    """Kill the process and all its children (platform-aware)."""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+            )
+        except Exception:
+            pass
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _port_free(host: str = PROXY_HOST, port: int = PROXY_PORT) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex((host, port)) != 0
+
+
+async def wait_for_port_free(attempts: int = 15) -> bool:
+    for _ in range(attempts):
+        if _port_free():
+            return True
+        await asyncio.sleep(0.5)
+    return False
 
 
 async def wait_for_health(client: httpx.AsyncClient, attempts: int = 30) -> bool:
@@ -60,6 +94,10 @@ async def test_site(client: httpx.AsyncClient, site: str) -> tuple[bool, str]:
 
 async def run_one_site(site: str, root: Path) -> tuple[bool, str, float]:
     """Start proxy, test one site, stop proxy. Returns (ok, detail, elapsed)."""
+    # Ensure port is free before starting
+    if not _port_free():
+        await wait_for_port_free()
+
     log_lines: list[str] = []
     proc = subprocess.Popen(
         [sys.executable, "-m", "proxy.main"],
@@ -67,7 +105,9 @@ async def run_one_site(site: str, root: Path) -> tuple[bool, str, float]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    log_thread = threading.Thread(target=_stream_logs, args=(proc, log_lines), daemon=True)
+    log_thread = threading.Thread(
+        target=_stream_logs, args=(proc, log_lines), daemon=True
+    )
     log_thread.start()
 
     ok, detail, elapsed = False, "proxy did not start", 0.0
@@ -80,12 +120,17 @@ async def run_one_site(site: str, root: Path) -> tuple[bool, str, float]:
             ok, detail = await test_site(client, site)
             elapsed = time.monotonic() - t0
     finally:
-        proc.terminate()
-        proc.wait()
+        _kill_proc_tree(proc)
+        # Wait for port to be released before returning
+        await wait_for_port_free()
 
     if not ok:
         await asyncio.sleep(0.2)
-        site_logs = [ln for ln in log_lines if site in ln.lower() or "ERROR" in ln or "WARNING" in ln]
+        site_logs = [
+            ln
+            for ln in log_lines
+            if site in ln.lower() or "ERROR" in ln or "WARNING" in ln
+        ]
         if site_logs:
             print(f"\n    [relevant proxy logs for {site}]")
             for ln in site_logs[-25:]:
@@ -107,8 +152,6 @@ async def main():
         results[site] = ok
         if not ok:
             print()
-        # Brief pause between sites so OS can release the port
-        await asyncio.sleep(2)
 
     print()
     passed = sum(results.values())

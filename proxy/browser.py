@@ -20,6 +20,15 @@ from playwright.async_api import (
     async_playwright,
 )
 
+# patchright patches navigator.webdriver, TLS fingerprint, and other bot signals.
+# Used only in headless mode — headed mode doesn't need it (Cloudflare passes real browsers).
+try:
+    from patchright.async_api import async_playwright as _patchright_playwright  # type: ignore
+
+    _HAVE_PATCHRIGHT = True
+except ImportError:
+    _HAVE_PATCHRIGHT = False
+
 from proxy.config import settings
 
 log = logging.getLogger(__name__)
@@ -83,7 +92,11 @@ class BrowserSession:
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        self._playwright = await async_playwright().start()
+        if settings.headless and _HAVE_PATCHRIGHT:
+            log.info("Using patchright (stealth headless mode)")
+            self._playwright = await _patchright_playwright().start()
+        else:
+            self._playwright = await async_playwright().start()
 
         has_cookies = self._cookies_path.exists()
 

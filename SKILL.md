@@ -15,12 +15,14 @@ No API keys required — the proxy uses browser sessions (cookies) to authentica
 # From this directory:
 cd C:/Users/berna/.claude/skills/ai-bridge
 
-# First time: install deps + playwright browsers
+# First time: install deps + browsers
 uv sync
-uv run playwright install chromium
+uv run playwright install chromium   # headed mode
+uv run patchright install chromium   # headless/stealth mode (Cloudflare bypass)
 
 # Start the server (defaults: 127.0.0.1:8080)
-uv run python -m proxy.main
+# Pass WATCHDOG_PID so the proxy exits automatically when this session ends
+WATCHDOG_PID=$$ uv run python -m proxy.main
 ```
 
 ## Session Storage (Cookies)
