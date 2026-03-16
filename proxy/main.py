@@ -560,7 +560,14 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
 
     async with site_session.lock:
         page = site_session.page
-        await scraper.start_new_chat(page, sel)
+        if site_session.config.skip_new_chat:
+            # Cloudflare-protected sites: do not navigate; capture existing content so
+            # wait_for_complete_response knows to ignore it and wait for new content.
+            init_text = await scraper.get_last_ai_message_text(page, sel)
+            log.debug("skip_new_chat: init_text len=%d", len(init_text))
+        else:
+            await scraper.start_new_chat(page, sel)
+            init_text = ""
 
         if body.model:
             model_label = site_session.config.models.get(body.model)
@@ -571,7 +578,7 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
 
         await scraper.type_message(page, body.prompt, sel)
         await scraper.submit_message(page, sel)
-        text = await streaming.wait_for_complete_response(page, sel, extra_placeholders)
+        text = await streaming.wait_for_complete_response(page, sel, extra_placeholders, init_text=init_text)
 
     return {"site": body.site, "model": body.model, "text": text}
 

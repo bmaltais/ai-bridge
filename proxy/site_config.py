@@ -40,6 +40,9 @@ class SiteConfig:
     model_selector: str | None = None
     auth_check: str | None = None  # selector present only when logged in; falls back to chat_input
 
+    # When True, skip start_new_chat entirely (avoids headless bot-detection for Cloudflare sites)
+    skip_new_chat: bool = False
+
     # Aliases: alternate names that resolve to this site (e.g. ["grok"] for x-ai)
     aliases: list[str] = field(default_factory=list)
 
@@ -63,6 +66,7 @@ class SiteConfig:
             new_chat=selectors.get("new_chat"),
             model_selector=selectors.get("model_selector"),
             auth_check=selectors.get("auth_check"),
+            skip_new_chat=data.get("skip_new_chat", False),
             aliases=data.get("aliases", []),
             models=data.get("models", {}),
         )

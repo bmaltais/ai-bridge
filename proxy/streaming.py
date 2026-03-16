@@ -38,12 +38,16 @@ async def wait_for_complete_response(
     page: Page,
     sel: SiteSelectors | None = None,
     extra_placeholders: frozenset[str] = frozenset(),
+    init_text: str = "",
 ) -> str:
     """
     Block until the AI has finished generating its response.
     Returns the full text of the last assistant message.
 
-    Raises asyncio.TimeoutError if response_timeout_s is exceeded.
+    init_text: text that was already in last_ai_msg before the prompt was submitted.
+               The response is only considered done when the text differs from this
+               AND is stable. Pass this when skipping start_new_chat (e.g. Cloudflare
+               sites) so we don't accidentally return stale content from a prior turn.
     """
     sel = sel or SiteSelectors()
     poll = settings.poll_interval_ms / 1000
@@ -71,9 +75,11 @@ async def wait_for_complete_response(
             stable_count = 0
             last_text = current
 
-        # Stable for long enough and not a transient placeholder?
-        if stable_count >= stable_ticks_needed and _is_complete(
-            last_text, extra_placeholders
+        # Stable for long enough, not a placeholder, and different from the pre-submit state?
+        if (
+            stable_count >= stable_ticks_needed
+            and _is_complete(last_text, extra_placeholders)
+            and last_text != init_text
         ):
             # Double-check spinner is gone
             if not await scraper.is_thinking(page, sel):

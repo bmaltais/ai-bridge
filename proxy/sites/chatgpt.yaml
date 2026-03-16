@@ -1,5 +1,6 @@
 name: chatgpt
 url: https://chatgpt.com
+skip_new_chat: true  # headless navigation triggers Cloudflare bot detection
 
 placeholders:
   - "ChatGPT is thinking…"

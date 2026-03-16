@@ -1,5 +1,6 @@
 name: perplexity
 url: https://www.perplexity.ai
+skip_new_chat: true  # headless navigation triggers Cloudflare bot detection
 
 # Perplexity shows "Thinking" in the answer block while generating.
 # The built-in placeholder set already covers this, but listed here for clarity.
