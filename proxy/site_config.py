@@ -45,6 +45,11 @@ class SiteConfig:
     # When True, skip start_new_chat entirely (avoids headless bot-detection for Cloudflare sites)
     skip_new_chat: bool = False
 
+    # When True, fall back to a DOM scan if the primary last_ai_msg selector returns empty
+    # for more than FALLBACK_TRIGGER_S seconds (see streaming.py).  Use for sites with
+    # hashed/volatile CSS class names where the selector may break between deploys.
+    fallback_detection: bool = False
+
     # Aliases: alternate names that resolve to this site (e.g. ["grok"] for x-ai)
     aliases: list[str] = field(default_factory=list)
 
@@ -69,6 +74,7 @@ class SiteConfig:
             model_selector=selectors.get("model_selector"),
             auth_check=selectors.get("auth_check"),
             skip_new_chat=data.get("skip_new_chat", False),
+            fallback_detection=data.get("fallback_detection", False),
             aliases=data.get("aliases", []),
             models=data.get("models", {}),
         )

@@ -575,36 +575,64 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
     sel = SiteSelectors.from_config(site_session.config)
     extra_placeholders = frozenset(site_session.config.placeholders)
 
+    last_exc: Exception | None = None
     async with site_session.lock:
-        page = site_session.page
-        if site_session.config.skip_new_chat and not body.chat_url:
-            # Cloudflare-protected sites: do not navigate; capture existing content so
-            # wait_for_complete_response knows to ignore it and wait for new content.
-            init_text = await scraper.get_last_ai_message_text(page, sel)
-            log.debug("skip_new_chat: init_text len=%d", len(init_text))
-        else:
-            # chat_url provided: always navigate (resume specific conversation).
-            # skip_new_chat=False: normal new-chat flow.
-            await scraper.goto_or_start_chat(page, sel, chat_url=body.chat_url)
-            init_text = ""
+        for attempt in range(1, 3):  # max 2 attempts: action → recover → retry
+            try:
+                page = site_session.page
+                if site_session.config.skip_new_chat and not body.chat_url:
+                    # Cloudflare-protected sites: do not navigate; capture existing content so
+                    # wait_for_complete_response knows to ignore it and wait for new content.
+                    init_text = await scraper.get_last_ai_message_text(page, sel)
+                    log.debug("skip_new_chat: init_text len=%d", len(init_text))
+                else:
+                    # chat_url provided: always navigate (resume specific conversation).
+                    # skip_new_chat=False: normal new-chat flow.
+                    await scraper.goto_or_start_chat(page, sel, chat_url=body.chat_url)
+                    init_text = ""
 
-        if body.model:
-            model_label = site_session.config.models.get(body.model)
-            if model_label:
-                await scraper.select_model(
-                    page, model_label, site_session.config.model_selector or ""
-                )
-            else:
-                log.warning(
-                    "Unknown model %r for site %r — using default",
-                    body.model,
-                    body.site,
-                )
+                if body.model:
+                    model_label = site_session.config.models.get(body.model)
+                    if model_label:
+                        await scraper.select_model(
+                            page, model_label, site_session.config.model_selector or ""
+                        )
+                    else:
+                        log.warning(
+                            "Unknown model %r for site %r — using default",
+                            body.model,
+                            body.site,
+                        )
 
-        await scraper.type_message(page, body.prompt, sel)
-        await scraper.submit_message(page, sel)
-        text = await streaming.wait_for_complete_response(
-            page, sel, extra_placeholders, init_text=init_text
+                await scraper.type_message(page, body.prompt, sel)
+                await scraper.submit_message(page, sel)
+                text = await streaming.wait_for_complete_response(
+                    page,
+                    sel,
+                    extra_placeholders,
+                    init_text=init_text,
+                    fallback_detection=site_session.config.fallback_detection,
+                    chat_input_sel=sel.chat_input,
+                )
+                last_exc = None
+                break  # success
+
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    log.warning(
+                        "Proxy attempt %d failed (%s: %s) — trying in-place recovery",
+                        attempt, type(exc).__name__, exc,
+                    )
+                    recovered = await site_session.session.recover(body.chat_url)
+                    if not recovered:
+                        log.warning("In-place recovery failed for %s", body.site)
+                        break  # no point retrying; caller gets 503
+
+    if last_exc is not None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Proxy failed after recovery attempt: {last_exc}",
         )
 
     return {"site": body.site, "model": body.model, "text": text, "chat_url": page.url}

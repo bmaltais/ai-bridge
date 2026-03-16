@@ -127,6 +127,57 @@ class BrowserSession:
         if self._login_notify is not None:
             self._login_notify.set()
 
+    async def is_healthy(self) -> bool:
+        """Quick liveness check before and after recovery attempts (2s timeout)."""
+        try:
+            if self._page is None or self._page.is_closed():
+                return False
+            url = self._page.url
+            if not url or url == "about:blank" or "login" in url.lower():
+                return False
+            await self._page.wait_for_selector(
+                self._auth_check or CHAT_INPUT_SELECTOR,
+                timeout=2000,
+                state="visible",
+            )
+            return True
+        except Exception:
+            return False
+
+    async def recover(self, chat_url: str | None = None) -> bool:
+        """Attempt lightweight in-place recovery without full re-init.
+
+        Tries (1) navigation to chat_url or site root, (2) page reload.
+        Returns True if session is healthy again, False if full re-init is needed.
+        Auth-expired sessions (login page) skip in-place repair entirely.
+        """
+        try:
+            if self._page is None or self._page.is_closed():
+                return False
+            if "login" in self._page.url.lower():
+                return False  # cookies expired — only reauth() can fix this
+
+            target = chat_url or self._url
+            try:
+                await self._page.goto(target, wait_until="domcontentloaded", timeout=15000)
+                if await self.is_healthy():
+                    log.info("Session recovered via navigation to %s", target)
+                    return True
+            except Exception as exc:
+                log.warning("Recovery navigation to %s failed: %s", target, exc)
+
+            try:
+                await self._page.reload(wait_until="domcontentloaded", timeout=10000)
+                if await self.is_healthy():
+                    log.info("Session recovered via page reload")
+                    return True
+            except Exception as exc:
+                log.warning("Recovery reload failed: %s", exc)
+        except Exception as exc:
+            log.warning("Unexpected error during recover(): %s", exc)
+
+        return False
+
     async def reauth(self) -> None:
         """Re-authenticate: close the current browser, delete stale cookies, open a headed login window."""
         log.warning("Re-authenticating: closing existing browser session")
