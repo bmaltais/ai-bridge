@@ -127,4 +127,5 @@ curl -X POST http://127.0.0.1:8080/v1/proxy \
 
 Perplexity and ChatGPT trigger Cloudflare bot detection in headless mode. Set `HEADLESS=false`
 in `.env` to run with a visible browser — this bypasses the challenge. For always-headless use,
-a stealth Playwright plugin (e.g. `playwright-stealth`) can be added.
+`patchright` (a stealth Chromium fork) is already integrated — it patches `navigator.webdriver`,
+TLS fingerprint, and canvas fingerprint to bypass bot detection.
