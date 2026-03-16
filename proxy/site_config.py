@@ -38,7 +38,9 @@ class SiteConfig:
     thinking_spinner: str | None = None
     new_chat: str | None = None
     model_selector: str | None = None
-    auth_check: str | None = None  # selector present only when logged in; falls back to chat_input
+    auth_check: str | None = (
+        None  # selector present only when logged in; falls back to chat_input
+    )
 
     # When True, skip start_new_chat entirely (avoids headless bot-detection for Cloudflare sites)
     skip_new_chat: bool = False
@@ -84,7 +86,11 @@ class SiteConfig:
         for f in sites_dir.glob("*.yaml"):
             try:
                 cfg = cls.load(f)
-                if cfg.name in candidates or f.stem in candidates or any(a in candidates for a in cfg.aliases):
+                if (
+                    cfg.name in candidates
+                    or f.stem in candidates
+                    or any(a in candidates for a in cfg.aliases)
+                ):
                     return cfg
             except Exception:
                 continue

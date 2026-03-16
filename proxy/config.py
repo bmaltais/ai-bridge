@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Cookies and session data live outside the repo so they are never committed.
 # Default: ~/.claude/ai-bridge/cookies/  (overridable via COOKIES_PATH in .env)
-_DEFAULT_COOKIES_PATH = Path.home() / ".claude" / "ai-bridge" / "cookies" / "use-ai.json"
+_DEFAULT_COOKIES_PATH = (
+    Path.home() / ".claude" / "ai-bridge" / "cookies" / "use-ai.json"
+)
 
 
 class Settings(BaseSettings):
