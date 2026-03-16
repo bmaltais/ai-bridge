@@ -192,8 +192,13 @@ async def select_model(page: Page, model_label: str, model_selector: str) -> boo
         btn = page.locator(model_selector).first
         await btn.wait_for(state="visible", timeout=5_000)
         await btn.click()
-        # Wait for the dropdown to appear
-        option = page.locator(f"[role='option']").filter(has_text=model_label).first
+        # Wait for the dropdown to appear — some sites use [role='option'],
+        # others (e.g. x.com/i/grok) use [role='menuitem'].  Try both.
+        option = (
+            page.locator("[role='option'],[role='menuitem']")
+            .filter(has_text=model_label)
+            .first
+        )
         await option.wait_for(state="visible", timeout=3_000)
         await option.click()
         log.info("Model selected: %r", model_label)

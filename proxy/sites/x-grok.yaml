@@ -39,3 +39,19 @@ capabilities:
     action: click
     description: "Start a fresh conversation by navigating to x.com/i/grok"
     requires_confirmation: false
+  model_selector:
+    type: button
+    # Confirmed via DOM inspection 2026-03-16: button[aria-label="Auto"] opens a
+    # [role="menuitem"] dropdown — NOT [role="option"]. scraper.select_model() now
+    # handles both. Available options confirmed: Auto, Fast, Expert.
+    # Grok 4.2 beta not visible on x.com/i/grok — may require grok.com.
+    selector: 'button[aria-label="Auto"]'
+    action: click
+    description: "Switch Grok response mode (Auto / Fast / Expert)"
+    options:
+      - value: "Auto"
+        label: "Auto"
+      - value: "Fast"
+        label: "Fast"
+      - value: "Expert"
+        label: "Expert"
