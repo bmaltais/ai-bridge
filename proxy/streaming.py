@@ -46,12 +46,14 @@ def _is_complete(text: str, extra_placeholders: frozenset[str] = frozenset()) ->
         return False
     # Grok (x.com/i/grok) shows a "Thinking [about <topic>]\n<one-line summary>" preview
     # in the last_ai_msg element before the actual response starts streaming.  Variants:
-    #   "Thinking about the user's request\n<summary>"  — complex questions
-    #   "Thinking\n<summary>"                           — simpler questions
+    #   "Thinking about the user's request\n<summary>"  — complex questions (34 chars before \n)
+    #   "Thinking\n<summary>"                           — simpler questions (8 chars before \n)
     # Both are multi-line, so the single-line Searching guard doesn't catch them.
     # The exact strings "Thinking" / "Thinking..." are already in _BUILTIN_PLACEHOLDERS
     # but only as exact matches.  This startswith guard covers the multi-line variants.
-    if t.startswith("Thinking") and "\n" in t and t.index("\n") < 30:
+    # Threshold is 60 (not 30) to cover the longest known prefix "Thinking about the user's
+    # request" (34 chars). Real responses are always substantially longer than 2 lines.
+    if t.startswith("Thinking") and "\n" in t and t.index("\n") < 60:
         return False
     return True
 
