@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = 8080
-    headless: bool = True
+    headless: bool = False
 
     # Response detection
     poll_interval_ms: int = 200
