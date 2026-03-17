@@ -1,6 +1,6 @@
 # ai-bridge
 
-A local server that exposes LLM interfaces through a simple HTTP API.
+A LLM skill that acr as a local server that exposes LLM interfaces through a simple HTTP API.
 Call `POST /v1/proxy` to send prompts to any configured site.
 Most sites use browser sessions (cookies) for auth. **OpenRouter** is API-based — no browser needed, just an API key.
 
