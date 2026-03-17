@@ -70,9 +70,14 @@ class SiteSessionManager:
         cfg = SiteConfig.find(site_name, self._sites_dir)
         key = cfg.name  # e.g. "x-ai" even when site_name="grok"
 
-        # Fast path: already fully initialized
+        # Fast path: already fully initialized — guard against zombie sessions where
+        # is_ready=True but the underlying browser page has been closed externally.
         if key in self._sessions and self._sessions[key].is_ready:
-            return self._sessions[key]
+            if await self._sessions[key].session.is_healthy():
+                return self._sessions[key]
+            # Browser died without clearing the flag — fall through to re-init.
+            log.warning("Session %r is_ready but browser is dead — reinitializing", key)
+            self._sessions[key].session._ready = False
 
         # One init-lock per canonical site name
         if key not in self._init_locks:
@@ -111,9 +116,16 @@ class SiteSessionManager:
         self._sessions.clear()
 
     def _resolve_key(self, site_name: str) -> str:
-        """Resolve a site name or alias to its canonical session key."""
-        from proxy.site_config import SiteConfig
+        """Resolve a site name or alias to its canonical session key.
 
+        Checks initialized sessions first (avoids config lookup in the common post-init case).
+        Falls back to SiteConfig.find() which is disk-cached.
+        """
+        if site_name in self._sessions:
+            return site_name
+        for key, sess in self._sessions.items():
+            if site_name in sess.config.aliases:
+                return key
         try:
             return SiteConfig.find(site_name, self._sites_dir).name
         except Exception:
@@ -146,7 +158,9 @@ class SiteSessionManager:
             "initialized": False,
         }
 
-    def record_request(self, site_name: str, latency_ms: int, error: bool = False) -> None:
+    def record_request(
+        self, site_name: str, latency_ms: int, error: bool = False
+    ) -> None:
         """Record a request metric for a site (non-blocking, threadlocal counter update)."""
         key = self._resolve_key(site_name)
         if key not in self._metrics:

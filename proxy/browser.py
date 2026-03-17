@@ -54,7 +54,6 @@ _CHROMIUM_ARGS = [
 ]
 
 
-
 # ---------------------------------------------------------------------------
 # LoginHandler abstraction � decouples platform-specific notifications
 # ---------------------------------------------------------------------------
@@ -123,13 +122,13 @@ class BrowserSession:
 
     def __init__(
         self,
-        url: str | None = None,
-        cookies_path: Path | None = None,
+        url: str,
+        cookies_path: Path,
         auth_check: str | None = None,
         login_handler: LoginHandler | None = None,
     ) -> None:
-        self._url = url or settings.use_ai_url
-        self._cookies_path = cookies_path or settings.cookies_path
+        self._url = url
+        self._cookies_path = cookies_path
         self._auth_check = auth_check  # overrides default CHAT_INPUT_SELECTOR when set
         self._login_handler = login_handler or get_login_handler(settings.headless)
         self._playwright: Playwright | None = None
@@ -269,7 +268,9 @@ class BrowserSession:
 
             target = chat_url or self._url
             try:
-                await self._page.goto(target, wait_until="domcontentloaded", timeout=15000)
+                await self._page.goto(
+                    target, wait_until="domcontentloaded", timeout=15000
+                )
                 if await self.is_healthy():
                     log.info("Session recovered via navigation to %s", target)
                     return True
@@ -370,7 +371,6 @@ class BrowserSession:
         log.info("Switching to headless session...")
         await self._close_browser()
         await self._launch_with_cookies()
-
 
     async def _close_browser(self) -> None:
         if self._context:
