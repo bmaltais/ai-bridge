@@ -13,6 +13,14 @@ skip_new_chat: true
 # streaming.py falls back to finding leaf elements with >100 chars inside <main>.
 fallback_detection: true
 
+# Use submit-button state as the primary completion gate instead of text-stability timing.
+# Grok disables (or replaces with a stop button) 'button[aria-label="Grok something"]'
+# while generating and re-enables it when done.  This is a binary DOM signal, so
+# mid-response pauses (Grok "thinking" phases between paragraphs, Expert mode reasoning
+# steps) no longer trigger false completion — unlike the 1500ms stability heuristic which
+# fires whenever text is unchanged for 1.5s regardless of whether Grok is still working.
+completion_signal: submit_button_enabled
+
 placeholders:
   - "Thinking..."
   - "Generating..."

@@ -26,12 +26,12 @@ _COOKIES_DIR = Path.home() / ".claude" / "ai-bridge" / "cookies"
 class CapabilityConfig:
     """One named UI control a site exposes (button, select, slider, etc.)."""
 
-    type: str                            # button | select | input | textarea | slider | toggle
-    selector: str                        # CSS selector for the element
-    action: str                          # click | fill | set_value | select_by_value | select_by_label | toggle
+    type: str  # button | select | input | textarea | slider | toggle
+    selector: str  # CSS selector for the element
+    action: str  # click | fill | set_value | select_by_value | select_by_label | toggle
     description: str = ""
     options: list[dict[str, str]] = field(default_factory=list)  # [{value, label}, ...]
-    range: list[float] = field(default_factory=list)             # [min, max] for sliders
+    range: list[float] = field(default_factory=list)  # [min, max] for sliders
     step: float | None = None
     requires_confirmation: bool = False
 
@@ -78,6 +78,18 @@ class SiteConfig:
     # hashed/volatile CSS class names where the selector may break between deploys.
     fallback_detection: bool = False
 
+    # Primary completion signal. Options:
+    #   None (default) — time-based: text stable for stable_threshold_ms + spinner gone
+    #   "submit_button_enabled" — button-based: wait for submit button to re-enable after
+    #       being disabled/absent during generation. More reliable for sites that toggle the
+    #       send button (e.g. x.com/i/grok) because it's a direct DOM state signal, not a
+    #       timing heuristic, so mid-response pauses never trigger false completion.
+    completion_signal: str | None = None
+
+    # Per-site override for stable_threshold_ms (ms of stable text required before declaring
+    # completion in the time-based fallback path). None = use global settings value.
+    stable_threshold_ms: int | None = None
+
     # Aliases: alternate names that resolve to this site (e.g. ["grok"] for x-ai)
     aliases: list[str] = field(default_factory=list)
 
@@ -107,6 +119,8 @@ class SiteConfig:
             auth_check=selectors.get("auth_check"),
             skip_new_chat=data.get("skip_new_chat", False),
             fallback_detection=data.get("fallback_detection", False),
+            completion_signal=data.get("completion_signal"),
+            stable_threshold_ms=data.get("stable_threshold_ms"),
             aliases=data.get("aliases", []),
             models=data.get("models", {}),
             capabilities={

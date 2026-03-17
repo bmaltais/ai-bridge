@@ -1,9 +1,17 @@
 """
 Response completion detection.
 
-Strategy: poll the last AI message element every POLL_INTERVAL_MS.
+Strategy (default): poll the last AI message element every POLL_INTERVAL_MS.
 When text is stable for STABLE_THRESHOLD_MS and the thinking spinner is gone,
 we consider the response complete.
+
+Strategy (submit_button_enabled): use the submit button DOM state as the primary
+completion gate. Phase 1 waits for the button to become disabled/absent (confirms
+generation started). Phase 2 waits for the button to re-enable (generation done),
+then confirms with 2 stability ticks. This is reliable for sites like x.com/i/grok
+where the button is disabled or replaced by a stop button during generation, making
+it a binary DOM signal rather than a timing heuristic — mid-response pauses (e.g.
+Grok "thinking" phases between paragraphs) never trigger false completion.
 
 Fallback detection (opt-in per site via fallback_detection: true in YAML):
 If the primary last_ai_msg selector returns empty for FALLBACK_TRIGGER_S seconds,
@@ -28,6 +36,15 @@ _BUILTIN_PLACEHOLDERS = frozenset({"Thinking...", "Thinking", "...", ""})
 
 # How long to wait on an empty primary selector before activating DOM-scan fallback.
 _FALLBACK_TRIGGER_S = 5.0
+
+# How long to wait (s) for the submit button to go disabled after submission.
+# Fast responses may skip disabled state entirely — that's fine, we fall through.
+_BUTTON_DISABLE_WAIT_S = 5.0
+
+# Stability ticks required after button re-enables before we return.
+# 2 ticks × POLL_INTERVAL_MS (200ms default) = 400ms — enough to catch a final
+# streaming burst without waiting a full STABLE_THRESHOLD_MS cycle.
+_BUTTON_STABLE_TICKS = 2
 
 
 def _is_complete(text: str, extra_placeholders: frozenset[str] = frozenset()) -> bool:
@@ -87,6 +104,18 @@ async def _dom_scan_last_message(page: Page, chat_input_sel: str) -> str:
         return ""
 
 
+async def _read_text(
+    page: Page,
+    sel: SiteSelectors,
+    using_fallback: bool,
+    input_sel: str,
+) -> str:
+    """Read the current last AI message text, using fallback DOM scan if activated."""
+    if using_fallback:
+        return await _dom_scan_last_message(page, input_sel)
+    return await scraper.get_last_ai_message_text(page, sel)
+
+
 async def wait_for_complete_response(
     page: Page,
     sel: SiteSelectors | None = None,
@@ -94,6 +123,8 @@ async def wait_for_complete_response(
     init_text: str = "",
     fallback_detection: bool = False,
     chat_input_sel: str | None = None,
+    completion_signal: str | None = None,
+    stable_threshold_ms: int | None = None,
 ) -> str:
     """
     Block until the AI has finished generating its response.
@@ -108,43 +139,59 @@ async def wait_for_complete_response(
                Enable for sites with volatile hashed CSS classes (e.g. x.com).
     chat_input_sel: CSS selector for the chat input — used to find the <main>
                container in DOM-scan fallback.  Defaults to sel.chat_input.
+    completion_signal: "submit_button_enabled" → use button DOM state as primary gate
+               (reliable for Grok); None → time-based stability (default).
+    stable_threshold_ms: per-site override for the time-based stable threshold.
+               None = use global settings.stable_threshold_ms.
     """
     sel = sel or SiteSelectors()
     poll = settings.poll_interval_ms / 1000
-    stable_ticks_needed = max(
-        1, round(settings.stable_threshold_ms / settings.poll_interval_ms)
+    threshold_ms = (
+        stable_threshold_ms
+        if stable_threshold_ms is not None
+        else settings.stable_threshold_ms
     )
+    stable_ticks_needed = max(1, round(threshold_ms / settings.poll_interval_ms))
     timeout = settings.response_timeout_s
     input_sel = chat_input_sel or sel.chat_input
 
+    # Give the page a moment to start generating before we start polling.
+    await asyncio.sleep(0.5)
+
+    if completion_signal == "submit_button_enabled":
+        return await _wait_button_signal(
+            page,
+            sel,
+            extra_placeholders,
+            init_text,
+            fallback_detection,
+            input_sel,
+            poll,
+            timeout,
+        )
+
+    # ---- Default: time-based stability path ----
     last_text = ""
     stable_count = 0
     elapsed = 0.0
     using_fallback = False
 
-    # Give the page a moment to start generating before we start polling
-    await asyncio.sleep(0.5)
-
     while elapsed < timeout:
         await asyncio.sleep(poll)
         elapsed += poll
 
-        if using_fallback:
-            current = await _dom_scan_last_message(page, input_sel)
-        else:
+        if not using_fallback:
             current = await scraper.get_last_ai_message_text(page, sel)
             # Primary selector still empty after FALLBACK_TRIGGER_S — activate fallback.
-            if (
-                fallback_detection
-                and not current
-                and elapsed >= _FALLBACK_TRIGGER_S
-            ):
+            if fallback_detection and not current and elapsed >= _FALLBACK_TRIGGER_S:
                 log.warning(
                     "Primary selector empty after %.0fs — activating DOM-scan fallback",
                     elapsed,
                 )
                 using_fallback = True
                 continue
+        else:
+            current = await _dom_scan_last_message(page, input_sel)
 
         if current == last_text:
             stable_count += 1
@@ -165,6 +212,98 @@ async def wait_for_complete_response(
             stable_count = 0
 
     if elapsed >= timeout:
-        log.warning("Response timed out after %ds (fallback=%s)", timeout, using_fallback)
+        log.warning(
+            "Response timed out after %ds (fallback=%s)", timeout, using_fallback
+        )
+
+    return last_text
+
+
+async def _wait_button_signal(
+    page: Page,
+    sel: SiteSelectors,
+    extra_placeholders: frozenset[str],
+    init_text: str,
+    fallback_detection: bool,
+    input_sel: str,
+    poll: float,
+    timeout: float,
+) -> str:
+    """Button-signal completion path.
+
+    Phase 1 (up to _BUTTON_DISABLE_WAIT_S): wait for the submit button to become
+    disabled/absent, confirming generation has started.  Some fast responses skip this
+    state entirely — that's fine, we fall through to Phase 2 immediately.
+
+    Phase 2 (up to timeout): poll until the submit button re-enables AND the text has
+    changed from init_text AND _is_complete() passes.  Then require _BUTTON_STABLE_TICKS
+    consecutive stable reads before returning.  This absorbs any final streaming burst
+    that arrives just as the button re-enables.
+    """
+    elapsed = 0.0
+    using_fallback = False
+    last_text = ""
+    stable_count = 0
+
+    # --- Phase 1: detect generation start ---
+    phase1_elapsed = 0.0
+    while phase1_elapsed < _BUTTON_DISABLE_WAIT_S:
+        await asyncio.sleep(poll)
+        phase1_elapsed += poll
+        if not await scraper.is_submit_button_enabled(page, sel):
+            log.debug(
+                "Button disabled after %.1fs — generation confirmed started",
+                phase1_elapsed,
+            )
+            break
+    else:
+        log.debug(
+            "Button never went disabled in %.0fs — fast response or selector issue; "
+            "proceeding to Phase 2 anyway",
+            _BUTTON_DISABLE_WAIT_S,
+        )
+    elapsed += phase1_elapsed
+
+    # --- Phase 2: wait for generation end ---
+    while elapsed < timeout:
+        await asyncio.sleep(poll)
+        elapsed += poll
+
+        # Read text (with fallback support)
+        if not using_fallback:
+            current = await scraper.get_last_ai_message_text(page, sel)
+            if fallback_detection and not current and elapsed >= _FALLBACK_TRIGGER_S:
+                log.warning(
+                    "Primary selector empty after %.0fs — activating DOM-scan fallback",
+                    elapsed,
+                )
+                using_fallback = True
+                continue
+        else:
+            current = await _dom_scan_last_message(page, input_sel)
+
+        if current == last_text:
+            stable_count += 1
+        else:
+            stable_count = 0
+            last_text = current
+
+        # Button re-enabled: generation done. Confirm with stability ticks.
+        btn_enabled = await scraper.is_submit_button_enabled(page, sel)
+        if (
+            btn_enabled
+            and _is_complete(last_text, extra_placeholders)
+            and last_text != init_text
+            and stable_count >= _BUTTON_STABLE_TICKS
+        ):
+            log.debug(
+                "Button re-enabled + text stable (%d ticks) — response complete (len=%d)",
+                stable_count,
+                len(last_text),
+            )
+            break
+
+    if elapsed >= timeout:
+        log.warning("Button-signal response timed out after %ds", timeout)
 
     return last_text

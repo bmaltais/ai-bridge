@@ -546,12 +546,14 @@ class ProxyRequest(BaseModel):
         None  # friendly name from site's models map, e.g. "claude-sonnet"
     )
     chat_url: str | None = None  # resume existing chat thread; if None, starts new chat
-    new_conversation: bool | None = None  # True=force new chat, False=never, None=heuristic
+    new_conversation: bool | None = (
+        None  # True=force new chat, False=never, None=heuristic
+    )
 
 
 class ControlRequest(BaseModel):
     site: str
-    capability: str          # e.g. "new_chat", "model_selector"
+    capability: str  # e.g. "new_chat", "model_selector"
     value: str | float | None = None  # required for fill/select/set_value actions
 
 
@@ -595,7 +597,9 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
 
                 if want_new and "new_chat" in site_session.config.capabilities:
                     log.info("Invoking new_chat capability before prompt")
-                    await scraper.invoke_capability(page, "new_chat", site_session.config)
+                    await scraper.invoke_capability(
+                        page, "new_chat", site_session.config
+                    )
 
                 if site_session.config.skip_new_chat and not body.chat_url:
                     # Cloudflare-protected sites: do not navigate; capture existing content so
@@ -630,6 +634,8 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
                     init_text=init_text,
                     fallback_detection=site_session.config.fallback_detection,
                     chat_input_sel=sel.chat_input,
+                    completion_signal=site_session.config.completion_signal,
+                    stable_threshold_ms=site_session.config.stable_threshold_ms,
                 )
                 last_exc = None
                 break  # success
@@ -639,7 +645,9 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
                 if attempt < 2:
                     log.warning(
                         "Proxy attempt %d failed (%s: %s) — trying in-place recovery",
-                        attempt, type(exc).__name__, exc,
+                        attempt,
+                        type(exc).__name__,
+                        exc,
                     )
                     recovered = await site_session.session.recover(body.chat_url)
                     if not recovered:
@@ -694,13 +702,20 @@ async def control_capability(body: ControlRequest):
             -H 'Content-Type: application/json' \\
             -d '{"site": "x-grok", "capability": "new_chat"}'
     """
-    log.info("POST /v1/control site=%s capability=%s value=%r", body.site, body.capability, body.value)
+    log.info(
+        "POST /v1/control site=%s capability=%s value=%r",
+        body.site,
+        body.capability,
+        body.value,
+    )
     try:
         site_session = await site_manager.get(body.site)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
-        raise HTTPException(status_code=503, detail=f"Session for {body.site!r} not ready")
+        raise HTTPException(
+            status_code=503, detail=f"Session for {body.site!r} not ready"
+        )
 
     async with site_session.lock:
         try:
@@ -710,9 +725,16 @@ async def control_capability(body: ControlRequest):
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"Capability invocation failed: {exc}")
+            raise HTTPException(
+                status_code=503, detail=f"Capability invocation failed: {exc}"
+            )
 
-    return {"status": "ok", "site": body.site, "capability": body.capability, "chat_url": site_session.page.url}
+    return {
+        "status": "ok",
+        "site": body.site,
+        "capability": body.capability,
+        "chat_url": site_session.page.url,
+    }
 
 
 # ---------------------------------------------------------------------------

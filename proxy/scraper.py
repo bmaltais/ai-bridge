@@ -171,11 +171,20 @@ async def is_thinking(page: Page, sel: SiteSelectors = _DEFAULT) -> bool:
 
 
 async def is_submit_button_enabled(page: Page, sel: SiteSelectors = _DEFAULT) -> bool:
-    """Return True if the send button is not disabled."""
+    """Return True if the send button is present and not disabled.
+
+    Returns False when the button is absent (e.g. replaced by a stop button during
+    generation) or has a disabled/aria-disabled attribute set.
+    """
     try:
-        btn = page.locator(sel.submit_button).first
+        loc = page.locator(sel.submit_button)
+        count = await loc.count()
+        if count == 0:
+            return False  # button replaced by stop button — still generating
+        btn = loc.first
         disabled = await btn.get_attribute("disabled")
-        return disabled is None
+        aria_disabled = await btn.get_attribute("aria-disabled")
+        return disabled is None and aria_disabled != "true"
     except Exception:
         return True
 
@@ -273,7 +282,9 @@ async def invoke_capability(
             await page.wait_for_timeout(500)
         toggle = page.locator(cap.selector).first
         await toggle.wait_for(state="attached", timeout=3_000)
-        await toggle.evaluate("el => { el.click(); el.dispatchEvent(new Event('change', {bubbles: true})); }")
+        await toggle.evaluate(
+            "el => { el.click(); el.dispatchEvent(new Event('change', {bubbles: true})); }"
+        )
         log.info("grok_420_beta toggled")
         await page.keyboard.press("Escape")
         return
@@ -281,7 +292,9 @@ async def invoke_capability(
     # Generic fallback: dispatch by action type
     elem = await page.wait_for_selector(cap.selector, timeout=10_000)
     if elem is None:
-        raise RuntimeError(f"Selector not found for capability {cap_name!r}: {cap.selector}")
+        raise RuntimeError(
+            f"Selector not found for capability {cap_name!r}: {cap.selector}"
+        )
 
     if cap.action == "click":
         await elem.click()
@@ -292,19 +305,29 @@ async def invoke_capability(
     elif cap.action == "set_value":
         if value is None:
             raise ValueError(f"set_value action requires a value for {cap_name!r}")
-        await elem.evaluate("(el, v) => { el.value = v; el.dispatchEvent(new Event('input')); }", value)
+        await elem.evaluate(
+            "(el, v) => { el.value = v; el.dispatchEvent(new Event('input')); }", value
+        )
     elif cap.action == "select_by_value":
         if value is None:
-            raise ValueError(f"select_by_value action requires a value for {cap_name!r}")
+            raise ValueError(
+                f"select_by_value action requires a value for {cap_name!r}"
+            )
         await elem.select_option(value=str(value))
     elif cap.action == "select_by_label":
         if value is None:
-            raise ValueError(f"select_by_label action requires a value for {cap_name!r}")
+            raise ValueError(
+                f"select_by_label action requires a value for {cap_name!r}"
+            )
         await elem.select_option(label=str(value))
     elif cap.action == "toggle":
-        await elem.evaluate("el => { el.checked = !el.checked; el.dispatchEvent(new Event('change')); }")
+        await elem.evaluate(
+            "el => { el.checked = !el.checked; el.dispatchEvent(new Event('change')); }"
+        )
     else:
-        raise ValueError(f"Unsupported action {cap.action!r} for capability {cap_name!r}")
+        raise ValueError(
+            f"Unsupported action {cap.action!r} for capability {cap_name!r}"
+        )
 
     log.info("Capability %r invoked (action=%s, value=%r)", cap_name, cap.action, value)
 
@@ -320,11 +343,17 @@ async def goto_or_start_chat(
     if chat_url:
         try:
             if not chat_url.startswith("https://"):
-                raise ValueError(f"chat_url must start with https://, got: {chat_url!r}")
+                raise ValueError(
+                    f"chat_url must start with https://, got: {chat_url!r}"
+                )
             log.info("goto_or_start_chat: resuming %s", chat_url)
             await page.goto(chat_url, wait_until="domcontentloaded", timeout=45_000)
             await page.wait_for_selector(sel.chat_input, timeout=15_000)
             return  # successfully resumed
         except Exception as exc:
-            log.warning("goto_or_start_chat: failed to resume %s (%s) — falling back to new chat", chat_url, exc)
+            log.warning(
+                "goto_or_start_chat: failed to resume %s (%s) — falling back to new chat",
+                chat_url,
+                exc,
+            )
     await start_new_chat(page, sel)
