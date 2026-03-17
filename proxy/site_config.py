@@ -21,6 +21,10 @@ import yaml
 # Default: ~/.claude/ai-bridge/cookies/<site>.json
 _COOKIES_DIR = Path.home() / ".claude" / "ai-bridge" / "cookies"
 
+# Module-level cache: (canonical_name, sites_dir) → SiteConfig.
+# YAMLs don't change at runtime, so a simple dict is sufficient.
+_config_cache: dict[tuple[str, str], "SiteConfig"] = {}
+
 
 @dataclass
 class CapabilityConfig:
@@ -141,10 +145,15 @@ class SiteConfig:
         """Find a config by site name or YAML file stem.
 
         Normalizes common aliases: dots become hyphens (e.g. "use.ai" → "use-ai").
+        Results are cached per (name, sites_dir) — YAMLs don't change at runtime.
         """
         if not sites_dir.exists():
             raise FileNotFoundError(f"Sites directory not found: {sites_dir}")
-        # Build candidate names: original + dot-to-hyphen variant
+
+        cache_key = (name, str(sites_dir))
+        if cache_key in _config_cache:
+            return _config_cache[cache_key]
+
         candidates = {name, name.replace(".", "-")}
         for f in sites_dir.glob("*.yaml"):
             try:
@@ -154,6 +163,7 @@ class SiteConfig:
                     or f.stem in candidates
                     or any(a in candidates for a in cfg.aliases)
                 ):
+                    _config_cache[cache_key] = cfg
                     return cfg
             except Exception:
                 continue

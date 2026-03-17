@@ -91,3 +91,39 @@ class SiteSessionManager:
             log.info("Closing session for site=%s", name)
             await site_session.session.close()
         self._sessions.clear()
+
+    def _resolve_key(self, site_name: str) -> str:
+        """Resolve a site name or alias to its canonical session key."""
+        from proxy.site_config import SiteConfig
+
+        try:
+            return SiteConfig.find(site_name, self._sites_dir).name
+        except Exception:
+            return site_name
+
+    async def notify_login(self, site_name: str) -> bool:
+        """Signal login completion for a site. Returns True if the signal was sent."""
+        key = self._resolve_key(site_name)
+        if key in self._sessions:
+            await self._sessions[key].session.notify_login()
+            return True
+        return False
+
+    def get_status(self, site_name: str) -> dict:
+        """Return session status for a site (login_pending, ready, initialized)."""
+        key = self._resolve_key(site_name)
+        if key in self._sessions:
+            sess = self._sessions[key].session
+            return {
+                "site": site_name,
+                "canonical": key,
+                "login_pending": sess.login_pending,
+                "ready": sess.is_ready,
+                "initialized": True,
+            }
+        return {
+            "site": site_name,
+            "login_pending": False,
+            "ready": False,
+            "initialized": False,
+        }
