@@ -49,13 +49,21 @@ def _start_bridge(host: str, port: int) -> bool:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_f = open(log_dir / "proxy.log", "a")
     env = {**os.environ, "WATCHDOG_PID": "1"}  # PID 1 disables watchdog → persistent bridge
+    # Bridge needs python.exe (not pythonw) — logging requires stdio.
+    # STARTUPINFO(SW_HIDE) hides the console window at the Win32 level.
+    si = None
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
     subprocess.Popen(
-        [_pythonw(), "-m", "proxy.main"],
+        [sys.executable, "-m", "proxy.main"],
         cwd=str(_SKILL_ROOT),
         stdout=log_f,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         env=env,
+        startupinfo=si,
     )
     deadline = time.time() + 20
     interval = 0.5
@@ -75,6 +83,7 @@ def _launch_tray(host: str, port: int) -> None:
     if not tray_script.exists():
         return
     try:
+        # pythonw = no console window; tkinter creates its own GUI window
         subprocess.Popen(
             [_pythonw(), str(tray_script), "--host", host, "--port", str(port)],
             cwd=str(_SKILL_ROOT),

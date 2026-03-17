@@ -49,13 +49,6 @@ def _is_running(port: int) -> bool:
         return False
 
 
-def _pythonw() -> str:
-    """Return pythonw.exe path (no console window) or fall back to sys.executable."""
-    exe = Path(sys.executable)
-    pw = exe.parent / exe.name.replace("python", "pythonw")
-    return str(pw) if pw.exists() else sys.executable
-
-
 def _start_bridge(port: int) -> subprocess.Popen:
     """Spawn the bridge server as a background process (no console window)."""
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,11 +64,17 @@ def _start_bridge(port: int) -> subprocess.Popen:
         "stdin": subprocess.DEVNULL,
         "env": env,
     }
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        # STARTUPINFO(SW_HIDE) hides console; python.exe keeps stdio for logging.
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        popen_kwargs["startupinfo"] = si
+    else:
         popen_kwargs["start_new_session"] = True
 
     return subprocess.Popen(
-        [_pythonw(), "-m", "proxy.main"],
+        [sys.executable, "-m", "proxy.main"],
         **popen_kwargs,
     )
 
