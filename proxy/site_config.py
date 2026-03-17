@@ -78,6 +78,12 @@ class SiteConfig:
     # hashed/volatile CSS class names where the selector may break between deploys.
     fallback_detection: bool = False
 
+    # Element that appears ONLY when generation is complete (e.g. Regenerate button on Grok).
+    # When set, streaming.py uses its DOM visibility as the done signal — more reliable than
+    # submit-button state for sites where the send button is absent when idle (e.g. x.com/i/grok,
+    # where button[aria-label="Grok something"] only appears while typing, never when idle).
+    done_indicator: str | None = None
+
     # Primary completion signal. Options:
     #   None (default) — time-based: text stable for stable_threshold_ms + spinner gone
     #   "submit_button_enabled" — button-based: wait for submit button to re-enable after
@@ -119,6 +125,7 @@ class SiteConfig:
             auth_check=selectors.get("auth_check"),
             skip_new_chat=data.get("skip_new_chat", False),
             fallback_detection=data.get("fallback_detection", False),
+            done_indicator=selectors.get("done_indicator"),
             completion_signal=data.get("completion_signal"),
             stable_threshold_ms=data.get("stable_threshold_ms"),
             aliases=data.get("aliases", []),

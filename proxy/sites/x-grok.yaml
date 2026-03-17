@@ -36,6 +36,11 @@ selectors:
   # AI message container: r-1wbh5a2+r-11niif6 distinguish AI turns from user turns.
   # User turns have r-3pj75a instead of r-1wbh5a2. Discovered 2026-03-16 via DOM inspection.
   last_ai_msg: '.r-1wbh5a2.r-11niif6'
+  # Appears ONLY after Grok finishes generating — confirmed 2026-03-17 via live DOM inspection.
+  # The send button (button[aria-label="Grok something"]) is absent from the DOM when idle
+  # (only appears while typing), so submit_button_enabled is useless as a done signal here.
+  # Regenerate is the reliable post-completion indicator.
+  done_indicator: 'button[aria-label="Regenerate"]'
 
 capabilities:
   new_chat:

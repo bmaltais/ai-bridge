@@ -78,6 +78,10 @@ class SiteSelectors:
     last_ai_msg: str = _LAST_AI_MSG
     thinking_spinner: str = _THINKING_SPINNER
     new_chat: str = _NEW_CHAT
+    # Element that becomes visible ONLY after generation completes (e.g. Regenerate button).
+    # When set, streaming.py uses its visibility as the primary done signal instead of
+    # submit-button state (which may not exist in the DOM when idle on some sites).
+    done_indicator: str | None = None
 
     @classmethod
     def from_config(cls, config) -> "SiteSelectors":
@@ -90,6 +94,7 @@ class SiteSelectors:
             last_ai_msg=config.last_ai_msg or _LAST_AI_MSG,
             thinking_spinner=config.thinking_spinner or _THINKING_SPINNER,
             new_chat=config.new_chat or _NEW_CHAT,
+            done_indicator=config.done_indicator or None,
         )
 
 

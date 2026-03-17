@@ -219,6 +219,24 @@ async def wait_for_complete_response(
     return last_text
 
 
+async def _is_done_signal(page: Page, sel: SiteSelectors) -> bool:
+    """Return True when the site's chosen completion signal fires.
+
+    Priority order:
+    1. done_indicator visible — element that appears ONLY after generation completes
+       (e.g. button[aria-label="Regenerate"] on x.com/i/grok).  Most reliable when
+       the send button doesn't stay in the DOM across idle/generating/done states.
+    2. submit_button_enabled — fallback for sites where the send button persists and
+       is disabled during generation (e.g. most ChatGPT-style interfaces).
+    """
+    if sel.done_indicator:
+        try:
+            return await page.locator(sel.done_indicator).first.is_visible()
+        except Exception:
+            pass
+    return await scraper.is_submit_button_enabled(page, sel)
+
+
 async def _wait_button_signal(
     page: Page,
     sel: SiteSelectors,
@@ -229,42 +247,46 @@ async def _wait_button_signal(
     poll: float,
     timeout: float,
 ) -> str:
-    """Button-signal completion path.
+    """Button/indicator-signal completion path.
 
-    Phase 1 (up to _BUTTON_DISABLE_WAIT_S): wait for the submit button to become
-    disabled/absent, confirming generation has started.  Some fast responses skip this
-    state entirely — that's fine, we fall through to Phase 2 immediately.
+    Phase 1 (up to _BUTTON_DISABLE_WAIT_S): wait for the done signal to be absent,
+    confirming generation has started.  Some fast responses skip this state — fine,
+    we fall through to Phase 2 immediately.
 
-    Phase 2 (up to timeout): poll until the submit button re-enables AND the text has
-    changed from init_text AND _is_complete() passes.  Then require _BUTTON_STABLE_TICKS
-    consecutive stable reads before returning.  This absorbs any final streaming burst
-    that arrives just as the button re-enables.
+    Phase 2 (up to timeout): poll until the done signal fires AND the text has changed
+    from init_text AND _is_complete() passes AND _BUTTON_STABLE_TICKS stable reads.
+    This absorbs any final streaming burst that arrives just as the signal fires.
+
+    Done signal priority: done_indicator visible > submit_button_enabled.
+    x.com/i/grok uses done_indicator=button[aria-label="Regenerate"] because the
+    send button (button[aria-label="Grok something"]) is absent from the DOM when idle
+    — watching it is useless since it's never found and always returns False.
     """
     elapsed = 0.0
     using_fallback = False
     last_text = ""
     stable_count = 0
 
-    # --- Phase 1: detect generation start ---
+    # --- Phase 1: detect generation start (done signal should be absent) ---
     phase1_elapsed = 0.0
     while phase1_elapsed < _BUTTON_DISABLE_WAIT_S:
         await asyncio.sleep(poll)
         phase1_elapsed += poll
-        if not await scraper.is_submit_button_enabled(page, sel):
+        if not await _is_done_signal(page, sel):
             log.debug(
-                "Button disabled after %.1fs — generation confirmed started",
+                "Done signal absent after %.1fs — generation confirmed started",
                 phase1_elapsed,
             )
             break
     else:
         log.debug(
-            "Button never went disabled in %.0fs — fast response or selector issue; "
+            "Done signal never went absent in %.0fs — fast response or first message; "
             "proceeding to Phase 2 anyway",
             _BUTTON_DISABLE_WAIT_S,
         )
     elapsed += phase1_elapsed
 
-    # --- Phase 2: wait for generation end ---
+    # --- Phase 2: wait for generation end (done signal fires) ---
     while elapsed < timeout:
         await asyncio.sleep(poll)
         elapsed += poll
@@ -288,16 +310,16 @@ async def _wait_button_signal(
             stable_count = 0
             last_text = current
 
-        # Button re-enabled: generation done. Confirm with stability ticks.
-        btn_enabled = await scraper.is_submit_button_enabled(page, sel)
+        # Done signal fired + text stable: generation complete.
+        done = await _is_done_signal(page, sel)
         if (
-            btn_enabled
+            done
             and _is_complete(last_text, extra_placeholders)
             and last_text != init_text
             and stable_count >= _BUTTON_STABLE_TICKS
         ):
-            log.debug(
-                "Button re-enabled + text stable (%d ticks) — response complete (len=%d)",
+            log.info(
+                "Done signal fired + text stable (%d ticks) — response complete (len=%d)",
                 stable_count,
                 len(last_text),
             )
