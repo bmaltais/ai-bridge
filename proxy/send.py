@@ -16,9 +16,46 @@ Examples:
 
 import argparse
 import json
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+_SKILL_ROOT = Path(__file__).parent.parent
+
+
+def _is_healthy(host: str, port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _start_bridge(host: str, port: int) -> bool:
+    """Start the bridge as a detached background process; wait up to 20s."""
+    print("ai-bridge not running — starting it...", file=sys.stderr)
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    subprocess.Popen(
+        ["uv", "run", "python", "-m", "proxy.main"],
+        cwd=str(_SKILL_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+    )
+    deadline = time.time() + 20
+    interval = 0.5
+    while time.time() < deadline:
+        if _is_healthy(host, port):
+            print(f"ai-bridge ready at http://{host}:{port}", file=sys.stderr)
+            return True
+        time.sleep(interval)
+        interval = min(interval * 1.3, 2.0)
+    return False
 
 
 def main() -> None:
@@ -38,6 +75,15 @@ def main() -> None:
     if args.chat_url:
         payload["chat_url"] = args.chat_url
 
+    if not _is_healthy(args.host, args.port):
+        if not _start_bridge(args.host, args.port):
+            print(
+                f"Failed to start ai-bridge on {args.host}:{args.port}.\n"
+                f"Try manually: cd {_SKILL_ROOT} && uv run python -m proxy.main",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     url = f"http://{args.host}:{args.port}/v1/proxy"
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
@@ -55,11 +101,6 @@ def main() -> None:
         sys.exit(1)
     except urllib.error.URLError as exc:
         print(f"Connection error: {exc.reason}", file=sys.stderr)
-        print(
-            f"Is the proxy running? Start it with:\n"
-            f"  uv run python -m proxy.main",
-            file=sys.stderr,
-        )
         sys.exit(1)
 
 
