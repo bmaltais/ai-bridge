@@ -31,8 +31,7 @@ from pydantic import BaseModel
 from proxy import inspector, lifecycle, scraper, streaming
 from proxy.config import settings
 from proxy.scraper import SiteSelectors
-from proxy.site_config import SiteConfig
-from proxy.site_session import SiteSession, SiteSessionManager
+from proxy.site_session import SiteSessionManager
 
 _SITES_DIR = Path(__file__).parent / "sites"
 site_manager = SiteSessionManager(_SITES_DIR)
@@ -73,11 +72,10 @@ app = FastAPI(title="ai-bridge proxy", lifespan=lifespan)
 async def health():
     return {"status": "ok"}
 
-
 @app.get("/v1/health/detailed")
 async def health_detailed():
     """Return detailed session status for all initialized sites.
-
+    
     Returns status (ready/logged-in/waiting) for each site.
     """
     result = {}
@@ -89,7 +87,7 @@ async def health_detailed():
 @app.get("/v1/metrics")
 async def metrics():
     """Return request/error/latency metrics for all sites.
-
+    
     Fast endpoint — returns aggregated counters (no blocking operations).
     """
     return {
@@ -111,18 +109,15 @@ async def _run_diagnosis(page, sel: SiteSelectors | None = None) -> str:
     return buf.getvalue()
 
 
-async def _require_session(site: str) -> SiteSession:
-    """Look up a site session, raising HTTPException(404) if config not found."""
-    try:
-        return await site_manager.get(site)
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
 @app.get("/debug/selectors/{site}")
 async def debug_selectors_site(site: str):
     """Run selector diagnosis on a specific site's browser page."""
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
     sel = SiteSelectors.from_config(site_session.config)
@@ -133,7 +128,12 @@ async def debug_selectors_site(site: str):
 @app.get("/debug/html/{site}")
 async def debug_html_site(site: str):
     """Dump the inner HTML of candidate response elements for selector debugging."""
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
 
@@ -179,7 +179,12 @@ async def debug_eval(site: str, body: EvalBody):
             -H 'Content-Type: application/json' \\
             -d '{"js": "() => document.title"}'
     """
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     result = await site_session.page.evaluate(body.js)
     return {"site": site, "result": result}
 
@@ -190,7 +195,12 @@ async def debug_dismiss_modal(site: str):
 
     Call: curl -X POST http://127.0.0.1:8080/debug/dismiss-modal/perplexity
     """
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     page = site_session.page
     await page.keyboard.press("Escape")
     for sel in [
@@ -232,7 +242,12 @@ async def debug_save_cookies(site: str):
 
     Call: curl -X POST http://127.0.0.1:8080/debug/save-cookies/perplexity
     """
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     await site_session.session.save_cookies()
     return {"status": "saved", "path": str(site_session.session._cookies_path)}
 
@@ -246,7 +261,12 @@ async def debug_find_text(
 
     Call: curl "http://127.0.0.1:8080/debug/find-text/perplexity"
     """
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
 
@@ -302,7 +322,12 @@ async def inspect_site(
 
     Call: curl http://127.0.0.1:8080/inspect/perplexity
     """
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
 
@@ -364,28 +389,7 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
     """
     log.info("POST /v1/proxy site=%s prompt_len=%d", body.site, len(body.prompt))
     start_time = time.time()
-
-    # Fast-path: API-based providers (no browser, no Playwright)
-    try:
-        site_cfg = SiteConfig.find(body.site, _SITES_DIR)
-    except (FileNotFoundError, ValueError) as exc:
-        site_manager.record_request(body.site, int((time.time() - start_time) * 1000), error=True)
-        raise HTTPException(status_code=404, detail=str(exc))
-
-    if site_cfg.provider_type == "api":
-        from proxy.adapters import openrouter as _openrouter
-        model_id = site_cfg.models.get(body.model or "", body.model or "openrouter/free")
-        try:
-            text = await _openrouter.query(model_id, body.prompt)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:
-            site_manager.record_request(body.site, int((time.time() - start_time) * 1000), error=True)
-            raise HTTPException(status_code=503, detail=str(exc))
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        site_manager.record_request(body.site, elapsed_ms, error=False)
-        return {"site": body.site, "model": model_id, "text": text, "chat_url": None}
-
+    
     try:
         site_session = await site_manager.get(body.site)
     except (FileNotFoundError, ValueError) as exc:
@@ -505,7 +509,12 @@ async def get_capabilities(site: str):
 
     Call: curl http://127.0.0.1:8080/v1/capabilities/x-grok
     """
-    site_session = await _require_session(site)
+    try:
+        site_session = await site_manager.get(site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     caps = site_session.config.capabilities
     return {
         "site": site,
@@ -536,7 +545,12 @@ async def control_capability(body: ControlRequest):
         body.capability,
         body.value,
     )
-    site_session = await _require_session(body.site)
+    try:
+        site_session = await site_manager.get(body.site)
+    except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(
             status_code=503, detail=f"Session for {body.site!r} not ready"

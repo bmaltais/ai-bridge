@@ -59,9 +59,6 @@ class SiteConfig:
     url: str
     cookies_path: Path
 
-    # "browser" (default) = Playwright-driven web UI; "api" = direct REST API call (no browser)
-    provider_type: str = "browser"
-
     # Transient placeholder texts the site shows while the AI is still generating.
     # Add site-specific ones here; proxy/streaming.py always ignores the built-in set.
     placeholders: list[str] = field(default_factory=list)
@@ -120,9 +117,8 @@ class SiteConfig:
         selectors = data.get("selectors", {})
         return cls(
             name=data["name"],
-            url=data.get("url", ""),
+            url=data["url"],
             cookies_path=Path(data.get("cookies_path", default_cookies)),
-            provider_type=data.get("provider_type", "browser"),
             placeholders=data.get("placeholders", []),
             chat_input=selectors.get("chat_input"),
             submit_button=selectors.get("submit_button"),

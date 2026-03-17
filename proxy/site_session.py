@@ -116,16 +116,9 @@ class SiteSessionManager:
         self._sessions.clear()
 
     def _resolve_key(self, site_name: str) -> str:
-        """Resolve a site name or alias to its canonical session key.
+        """Resolve a site name or alias to its canonical session key."""
+        from proxy.site_config import SiteConfig
 
-        Checks initialized sessions first (avoids config lookup in the common post-init case).
-        Falls back to SiteConfig.find() which is disk-cached.
-        """
-        if site_name in self._sessions:
-            return site_name
-        for key, sess in self._sessions.items():
-            if site_name in sess.config.aliases:
-                return key
         try:
             return SiteConfig.find(site_name, self._sites_dir).name
         except Exception:
@@ -158,9 +151,7 @@ class SiteSessionManager:
             "initialized": False,
         }
 
-    def record_request(
-        self, site_name: str, latency_ms: int, error: bool = False
-    ) -> None:
+    def record_request(self, site_name: str, latency_ms: int, error: bool = False) -> None:
         """Record a request metric for a site (non-blocking, threadlocal counter update)."""
         key = self._resolve_key(site_name)
         if key not in self._metrics:
