@@ -19,6 +19,20 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
+class SessionMetrics:
+    """Minimal metrics for a site session (request count, error count, total latency)."""
+
+    requests: int = 0
+    errors: int = 0
+    total_latency_ms: int = 0
+
+    @property
+    def avg_latency_ms(self) -> float:
+        """Return average latency in milliseconds, or 0 if no requests."""
+        return self.total_latency_ms / self.requests if self.requests > 0 else 0
+
+
+@dataclass
 class SiteSession:
     """Container for a site's browser session and its configuration."""
 
@@ -45,6 +59,7 @@ class SiteSessionManager:
         self._sites_dir = sites_dir
         self._sessions: dict[str, SiteSession] = {}
         self._init_locks: dict[str, asyncio.Lock] = {}
+        self._metrics: dict[str, SessionMetrics] = {}
 
     async def get(self, site_name: str) -> SiteSession:
         """Return a ready SiteSession for the given site, initializing it if needed.
@@ -78,6 +93,9 @@ class SiteSessionManager:
                 # Register BEFORE initialize() so /session/status can observe login_pending
                 # while the browser is waiting for the user to log in.
                 self._sessions[key] = SiteSession(session=browser, config=cfg)
+                # Initialize metrics for this site
+                if key not in self._metrics:
+                    self._metrics[key] = SessionMetrics()
 
             if not self._sessions[key].is_ready:
                 sess = self._sessions[key]
@@ -127,3 +145,26 @@ class SiteSessionManager:
             "ready": False,
             "initialized": False,
         }
+
+    def record_request(self, site_name: str, latency_ms: int, error: bool = False) -> None:
+        """Record a request metric for a site (non-blocking, threadlocal counter update)."""
+        key = self._resolve_key(site_name)
+        if key not in self._metrics:
+            self._metrics[key] = SessionMetrics()
+        metrics = self._metrics[key]
+        metrics.requests += 1
+        metrics.total_latency_ms += latency_ms
+        if error:
+            metrics.errors += 1
+
+    def get_metrics(self) -> dict[str, dict]:
+        """Return metrics for all sites as JSON-serializable dict."""
+        result = {}
+        for site_name, metrics in self._metrics.items():
+            result[site_name] = {
+                "requests": metrics.requests,
+                "errors": metrics.errors,
+                "total_latency_ms": metrics.total_latency_ms,
+                "avg_latency_ms": round(metrics.avg_latency_ms, 2),
+            }
+        return result

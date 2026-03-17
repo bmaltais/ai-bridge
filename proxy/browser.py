@@ -7,6 +7,7 @@ All browser interactions are serialized through an asyncio.Lock.
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,79 @@ CHAT_INPUT_SELECTOR = (
     'div[contenteditable="true"]'
 )
 
+# Chromium launch flags shared across all launch modes.
+# --disable-blink-features=AutomationControlled : suppress bot-detection signals.
+# --disable-features=ExternalProtocolDialog     : prevent Windows "Open in X app" / Store
+#     redirects when navigating to x.com or other sites with registered app protocol handlers.
+_CHROMIUM_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=ExternalProtocolDialog",
+]
+
+
+
+# ---------------------------------------------------------------------------
+# LoginHandler abstraction � decouples platform-specific notifications
+# ---------------------------------------------------------------------------
+
+
+class LoginHandler:
+    """Abstract base for login notification strategies."""
+
+    def notify(self, url: str) -> None:
+        """Notify user that login is required at the given URL.
+
+        Args:
+            url: The login URL to display to the user.
+        """
+        raise NotImplementedError
+
+
+class WindowsMessageBoxLoginHandler(LoginHandler):
+    """Windows MessageBox notification (platform-specific)."""
+
+    def notify(self, url: str) -> None:
+        """Fire a Windows toast notification so the login prompt is hard to miss."""
+        if sys.platform != "win32":
+            return
+        try:
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "[System.Windows.Forms.MessageBox]::Show("
+                f"'Log in to {url} in the browser window, then press ENTER in the terminal.', "
+                "'Proxy: Login Required', "
+                "'OK', "
+                "'Information') | Out-Null"
+            )
+            subprocess.Popen(
+                ["powershell", "-WindowStyle", "Hidden", "-Command", ps],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception:
+            pass  # notification is best-effort
+
+
+class HeadlessLoginHandler(LoginHandler):
+    """Silent handler for CI/CD and headless environments (logs only)."""
+
+    def notify(self, url: str) -> None:
+        """Log login requirement without user interaction."""
+        log.info("Login required at %s", url)
+
+
+def get_login_handler(headless: bool) -> LoginHandler:
+    """Factory function to select appropriate login handler.
+
+    Args:
+        headless: Whether running in headless mode.
+
+    Returns:
+        Appropriate LoginHandler instance for the environment.
+    """
+    if headless or sys.platform != "win32":
+        return HeadlessLoginHandler()
+    return WindowsMessageBoxLoginHandler()
+
 
 class BrowserSession:
     """Playwright session with cookie persistence for one site."""
@@ -52,10 +126,12 @@ class BrowserSession:
         url: str | None = None,
         cookies_path: Path | None = None,
         auth_check: str | None = None,
+        login_handler: LoginHandler | None = None,
     ) -> None:
         self._url = url or settings.use_ai_url
         self._cookies_path = cookies_path or settings.cookies_path
         self._auth_check = auth_check  # overrides default CHAT_INPUT_SELECTOR when set
+        self._login_handler = login_handler or get_login_handler(settings.headless)
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -92,6 +168,19 @@ class BrowserSession:
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
+        """Initialize the browser session.
+
+        Starts Playwright, launches browser (headless or headed per settings),
+        restores session from saved cookies if available, or prompts for login.
+
+        Note: When called through ensure_ready(), this is guarded by a 30-second
+        asyncio.timeout on lock acquisition. If initialization cannot acquire
+        the lock within 30 seconds, asyncio.TimeoutError is raised.
+
+        Raises:
+            RuntimeError: If Playwright fails to start or browser launch fails.
+            asyncio.TimeoutError: If lock acquisition times out (via ensure_ready).
+        """
         if settings.headless and _HAVE_PATCHRIGHT:
             log.info("Using patchright (stealth headless mode)")
             self._playwright = await _patchright_playwright().start()
@@ -115,12 +204,27 @@ class BrowserSession:
         log.info("Browser session ready.")
 
     async def ensure_ready(self) -> None:
-        """Initialize on first use; safe to call multiple times."""
+        """Initialize on first use; safe to call multiple times.
+
+        Acquires the internal lock with a 30-second timeout to prevent indefinite
+        hangs if another coroutine is stuck holding the lock.
+
+        Raises:
+            asyncio.TimeoutError: If lock cannot be acquired within 30 seconds.
+        """
         if self._ready:
             return
-        async with self._lock:
-            if not self._ready:
-                await self.initialize()
+        try:
+            async with asyncio.timeout(30):
+                async with self._lock:
+                    if not self._ready:
+                        await self.initialize()
+        except asyncio.TimeoutError:
+            log.error(
+                "Browser session initialization timed out after 30 seconds while waiting for lock. "
+                "Another operation may be stuck. Consider restarting the proxy."
+            )
+            raise
 
     async def notify_login(self) -> None:
         """Signal that the user has completed login in the browser window."""
@@ -150,6 +254,12 @@ class BrowserSession:
         Tries (1) navigation to chat_url or site root, (2) page reload.
         Returns True if session is healthy again, False if full re-init is needed.
         Auth-expired sessions (login page) skip in-place repair entirely.
+
+        Note: This method does not acquire the browser lock, so it can be called
+        concurrently with other operations. Browser interactions respect internal
+        Playwright timeouts (15s for navigation, 10s for reload). If the lock
+        is contended, recovery may be blocked by another operation's 30-second
+        initialization timeout.
         """
         try:
             if self._page is None or self._page.is_closed():
@@ -206,7 +316,7 @@ class BrowserSession:
         log.info("Launching browser (headless=%s) with saved session", headless)
         self._browser = await self._playwright.chromium.launch(
             headless=headless,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=_CHROMIUM_ARGS,
         )
         self._context = await self._browser.new_context(
             storage_state=str(self._cookies_path),
@@ -223,7 +333,7 @@ class BrowserSession:
         assert self._playwright
         self._browser = await self._playwright.chromium.launch(
             headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=_CHROMIUM_ARGS,
         )
         self._context = await self._browser.new_context(
             user_agent=(
@@ -235,7 +345,7 @@ class BrowserSession:
         self._page = await self._context.new_page()
         await self._page.goto(self._url, wait_until="domcontentloaded")
 
-        self._notify_login_required(self._url)
+        self._login_handler.notify(self._url)
         log.info(
             "Browser open for login at %s — waiting for POST /session/notify-login signal",
             self._url,
@@ -261,26 +371,6 @@ class BrowserSession:
         await self._close_browser()
         await self._launch_with_cookies()
 
-    @staticmethod
-    def _notify_login_required(url: str) -> None:
-        """Fire a Windows toast notification so the login prompt is hard to miss."""
-        if sys.platform != "win32":
-            return
-        try:
-            ps = (
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                "[System.Windows.Forms.MessageBox]::Show("
-                f"'Log in to {url} in the browser window, then press ENTER in the terminal.', "
-                "'Proxy: Login Required', "
-                "'OK', "
-                "'Information') | Out-Null"
-            )
-            subprocess.Popen(
-                ["powershell", "-WindowStyle", "Hidden", "-Command", ps],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-        except Exception:
-            pass  # notification is best-effort
 
     async def _close_browser(self) -> None:
         if self._context:
@@ -309,6 +399,19 @@ class BrowserSession:
     # ------------------------------------------------------------------
 
     async def save_cookies(self) -> None:
+        """Save browser cookies atomically.
+
+        Writes to a temporary file first, then performs an atomic rename to the
+        target cookies_path. This prevents corruption if the process crashes mid-write.
+        """
         assert self._context
         self._cookies_path.parent.mkdir(parents=True, exist_ok=True)
-        await self._context.storage_state(path=str(self._cookies_path))
+
+        # Atomic write: write to temp file, then atomic rename
+        temp_path = self._cookies_path.parent / f"{self._cookies_path.name}.tmp"
+        await self._context.storage_state(path=str(temp_path))
+        try:
+            os.replace(str(temp_path), str(self._cookies_path))
+        except Exception as exc:
+            log.error("Failed to atomically rename cookies: %s", exc)
+            raise

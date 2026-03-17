@@ -3,7 +3,10 @@ Response completion detection.
 
 Strategy (default): poll the last AI message element every POLL_INTERVAL_MS.
 When text is stable for STABLE_THRESHOLD_MS and the thinking spinner is gone,
-we consider the response complete.
+we consider the response complete. Uses structured phase-based timeouts:
+  - Phase 0 (initial): sleep(0.5) to let page start processing
+  - Phase 1 (arrival): wait TEXT_ARRIVAL_TIMEOUT_S for first real content
+  - Phase 2 (streaming): wait STREAMING_TIMEOUT_S for stability and completion
 
 Strategy (submit_button_enabled): use the submit button DOM state as the primary
 completion gate. Phase 1 waits for the button to become disabled/absent (confirms
@@ -33,6 +36,18 @@ log = logging.getLogger(__name__)
 # Built-in placeholder texts that indicate the AI is still generating.
 # Sites can add their own via SiteConfig.placeholders.
 _BUILTIN_PLACEHOLDERS = frozenset({"Thinking...", "Thinking", "...", ""})
+
+# ---- Phase-based timeout structure ----
+# Instead of a single global 120s timeout, responses are gated by structured phases:
+# - Phase 0 (initial): sleep(0.5) before first poll — let page start processing
+# - Phase 1 (arrival): poll for first real (non-placeholder) text response
+# - Phase 2 (streaming): poll for text stability and completion signals
+#
+# This allows fast responses to complete in 5-10s while preserving fallback for slow
+# servers (e.g. Grok reasoning models) without a bloated single timeout.
+_DOM_LOAD_TIMEOUT_S = 15.0  # Phase 0: max wait for DOM to settle after submission
+_TEXT_ARRIVAL_TIMEOUT_S = 5.0  # Phase 1: max wait for first real content to arrive
+_STREAMING_TIMEOUT_S = 120.0  # Phase 2: max wait for text stability and done signals
 
 # How long to wait on an empty primary selector before activating DOM-scan fallback.
 _FALLBACK_TRIGGER_S = 5.0
@@ -135,19 +150,25 @@ async def wait_for_complete_response(
     Block until the AI has finished generating its response.
     Returns the full text of the last assistant message.
 
-    init_text: text that was already in last_ai_msg before the prompt was submitted.
-               The response is only considered done when the text differs from this
-               AND is stable. Pass this when skipping start_new_chat (e.g. Cloudflare
-               sites) so we don't accidentally return stale content from a prior turn.
-    fallback_detection: when True, if the primary selector returns empty for
-               FALLBACK_TRIGGER_S seconds, switch to a DOM scan of leaf elements.
-               Enable for sites with volatile hashed CSS classes (e.g. x.com).
-    chat_input_sel: CSS selector for the chat input — used to find the <main>
-               container in DOM-scan fallback.  Defaults to sel.chat_input.
-    completion_signal: "submit_button_enabled" → use button DOM state as primary gate
-               (reliable for Grok); None → time-based stability (default).
-    stable_threshold_ms: per-site override for the time-based stable threshold.
-               None = use global settings.stable_threshold_ms.
+    Uses structured phase-based timeouts:
+      - Phase 0 (initial): sleep(0.5) to let page start processing
+      - Phase 1 (arrival): wait up to TEXT_ARRIVAL_TIMEOUT_S for first real content
+      - Phase 2 (streaming): wait up to STREAMING_TIMEOUT_S for text stability
+
+    Args:
+        init_text: text that was already in last_ai_msg before the prompt was submitted.
+                   The response is only considered done when the text differs from this
+                   AND is stable. Pass this when skipping start_new_chat (e.g. Cloudflare
+                   sites) so we don't accidentally return stale content from a prior turn.
+        fallback_detection: when True, if the primary selector returns empty for
+                   FALLBACK_TRIGGER_S seconds, switch to a DOM scan of leaf elements.
+                   Enable for sites with volatile hashed CSS classes (e.g. x.com).
+        chat_input_sel: CSS selector for the chat input — used to find the <main>
+                   container in DOM-scan fallback.  Defaults to sel.chat_input.
+        completion_signal: "submit_button_enabled" → use button DOM state as primary gate
+                   (reliable for Grok); None → time-based stability (default).
+        stable_threshold_ms: per-site override for the time-based stable threshold.
+                   None = use global settings.stable_threshold_ms.
     """
     sel = sel or SiteSelectors()
     poll = settings.poll_interval_ms / 1000
@@ -157,10 +178,10 @@ async def wait_for_complete_response(
         else settings.stable_threshold_ms
     )
     stable_ticks_needed = max(1, round(threshold_ms / settings.poll_interval_ms))
-    timeout = settings.response_timeout_s
     input_sel = chat_input_sel or sel.chat_input
 
-    # Give the page a moment to start generating before we start polling.
+    # Phase 0: Give the page a moment to start generating before we start polling.
+    log.debug("Phase 0: Initial page processing (sleep 0.5s)")
     await asyncio.sleep(0.5)
 
     if completion_signal == "submit_button_enabled":
@@ -172,17 +193,19 @@ async def wait_for_complete_response(
             fallback_detection,
             input_sel,
             poll,
-            timeout,
             stable_ticks_needed=stable_ticks_needed,
         )
 
-    # ---- Default: time-based stability path ----
+    # ---- Default: time-based stability path with phase gates ----
     last_text = ""
     stable_count = 0
     elapsed = 0.0
     using_fallback = False
+    phase1_complete = False  # True once we've seen first real content
 
-    while elapsed < timeout:
+    # --- Phase 1: Wait for first real (non-placeholder) content to arrive ---
+    log.debug("Phase 1 (TEXT_ARRIVAL): waiting up to %.0fs for first real content", _TEXT_ARRIVAL_TIMEOUT_S)
+    while elapsed < _TEXT_ARRIVAL_TIMEOUT_S:
         await asyncio.sleep(poll)
         elapsed += poll
 
@@ -191,7 +214,48 @@ async def wait_for_complete_response(
             # Primary selector still empty after FALLBACK_TRIGGER_S — activate fallback.
             if fallback_detection and not current and elapsed >= _FALLBACK_TRIGGER_S:
                 log.warning(
-                    "Primary selector empty after %.0fs — activating DOM-scan fallback",
+                    "Phase 1: Primary selector empty after %.0fs — activating DOM-scan fallback",
+                    elapsed,
+                )
+                using_fallback = True
+                continue
+        else:
+            current = await _dom_scan_last_message(page, input_sel)
+
+        # Check if we have real content (not placeholder, not init_text)
+        if _is_complete(current, extra_placeholders) and current != init_text:
+            log.debug(
+                "Phase 1: First real content arrived at %.1fs (len=%d)",
+                elapsed,
+                len(current),
+            )
+            last_text = current
+            phase1_complete = True
+            break
+        else:
+            last_text = current
+
+    if not phase1_complete:
+        log.warning(
+            "Phase 1: Timeout after %.0fs with no real content — proceeding to Phase 2",
+            _TEXT_ARRIVAL_TIMEOUT_S,
+        )
+
+    # --- Phase 2: Wait for text stability and final completion ---
+    log.debug("Phase 2 (STREAMING): waiting up to %.0fs for text stability", _STREAMING_TIMEOUT_S)
+    stable_count = 0
+    phase2_start = elapsed
+
+    while elapsed - phase2_start < _STREAMING_TIMEOUT_S:
+        await asyncio.sleep(poll)
+        elapsed += poll
+
+        if not using_fallback:
+            current = await scraper.get_last_ai_message_text(page, sel)
+            # Primary selector still empty after FALLBACK_TRIGGER_S — activate fallback.
+            if fallback_detection and not current and elapsed >= _FALLBACK_TRIGGER_S:
+                log.warning(
+                    "Phase 2: Primary selector empty after %.0fs — activating DOM-scan fallback",
                     elapsed,
                 )
                 using_fallback = True
@@ -213,13 +277,25 @@ async def wait_for_complete_response(
         ):
             # Double-check spinner is gone
             if not await scraper.is_thinking(page, sel):
+                log.info(
+                    "Phase 2: Response complete after %.1fs (stable_ticks=%d, len=%d, fallback=%s)",
+                    elapsed,
+                    stable_count,
+                    len(last_text),
+                    using_fallback,
+                )
                 break
             # Spinner still visible — keep waiting
             stable_count = 0
 
-    if elapsed >= timeout:
+    phase2_elapsed = elapsed - phase2_start
+    if phase2_elapsed >= _STREAMING_TIMEOUT_S:
         log.warning(
-            "Response timed out after %ds (fallback=%s)", timeout, using_fallback
+            "Phase 2: Timeout after %.0fs (total elapsed=%.1fs, fallback=%s, len=%d)",
+            _STREAMING_TIMEOUT_S,
+            elapsed,
+            using_fallback,
+            len(last_text),
         )
 
     return last_text
@@ -251,17 +327,16 @@ async def _wait_button_signal(
     fallback_detection: bool,
     input_sel: str,
     poll: float,
-    timeout: float,
     stable_ticks_needed: int = _BUTTON_STABLE_TICKS,
 ) -> str:
-    """Button/indicator-signal completion path.
+    """Button/indicator-signal completion path with structured phase timeouts.
 
     Phase 1 (up to _BUTTON_DISABLE_WAIT_S): wait for the done signal to be absent,
     confirming generation has started.  Some fast responses skip this state — fine,
     we fall through to Phase 2 immediately.
 
-    Phase 2 (up to timeout): poll until the done signal fires AND the text has changed
-    from init_text AND _is_complete() passes AND enough stable ticks.
+    Phase 2 (up to _STREAMING_TIMEOUT_S): poll until the done signal fires AND the text
+    has changed from init_text AND _is_complete() passes AND enough stable ticks.
 
     Required stable ticks (adaptive):
     - done signal CYCLED (went absent in Phase 1 or Phase 2, then reappeared):
@@ -275,8 +350,8 @@ async def _wait_button_signal(
     reappears.  If the button never cycled within _BUTTON_DISABLE_WAIT_S (slow-start
     reasoning model), Phase 1 falls through and Phase 2 sees done=True from tick 1 —
     so the only reliable gate is text stability.  When the button DID cycle, trusting
-    it immediately (1 tick) avoids a 120s timeout on long streaming responses where
-    stable_count never reaches 2 because text keeps changing throughout.
+    it immediately (1 tick) avoids a timeout on long streaming responses where
+    stable_count never reaches threshold because text keeps changing throughout.
 
     Done signal priority: done_indicator visible > submit_button_enabled.
     x.com/i/grok uses done_indicator=button[aria-label="Regenerate"] because the
@@ -290,28 +365,32 @@ async def _wait_button_signal(
     done_signal_cycled = False  # True once done signal is observed absent then present
 
     # --- Phase 1: detect generation start (done signal should be absent) ---
+    log.debug("Phase 1 (BUTTON_DISABLE): waiting up to %.0fs for done signal to go absent", _BUTTON_DISABLE_WAIT_S)
     phase1_elapsed = 0.0
     while phase1_elapsed < _BUTTON_DISABLE_WAIT_S:
         await asyncio.sleep(poll)
         phase1_elapsed += poll
         if not await _is_done_signal(page, sel):
             log.debug(
-                "Done signal absent after %.1fs — generation confirmed started",
+                "Phase 1: Done signal absent after %.1fs — generation confirmed started",
                 phase1_elapsed,
             )
             done_signal_cycled = True  # went absent; will become present again when done
             break
     else:
         log.debug(
-            "Done signal never went absent in %.0fs — slow start or pre-existing signal; "
+            "Phase 1: Done signal never went absent in %.0fs — slow start or pre-existing signal; "
             "will track cycle in Phase 2",
             _BUTTON_DISABLE_WAIT_S,
         )
     elapsed += phase1_elapsed
 
     # --- Phase 2: wait for generation end (done signal fires) ---
+    log.debug("Phase 2 (STREAMING): waiting up to %.0fs for done signal to fire", _STREAMING_TIMEOUT_S)
     done_was_absent = done_signal_cycled  # already observed absent in Phase 1?
-    while elapsed < timeout:
+    phase2_start = elapsed
+
+    while elapsed - phase2_start < _STREAMING_TIMEOUT_S:
         await asyncio.sleep(poll)
         elapsed += poll
 
@@ -320,7 +399,7 @@ async def _wait_button_signal(
             current = await scraper.get_last_ai_message_text(page, sel)
             if fallback_detection and not current and elapsed >= _FALLBACK_TRIGGER_S:
                 log.warning(
-                    "Primary selector empty after %.0fs — activating DOM-scan fallback",
+                    "Phase 2: Primary selector empty after %.0fs — activating DOM-scan fallback",
                     elapsed,
                 )
                 using_fallback = True
@@ -342,7 +421,7 @@ async def _wait_button_signal(
         elif done_was_absent and not done_signal_cycled:
             done_signal_cycled = True
             log.debug(
-                "Done signal cycled (absent → present) at %.1fs — trusting as genuine completion",
+                "Phase 2: Done signal cycled (absent → present) at %.1fs — trusting as genuine completion",
                 elapsed,
             )
 
@@ -356,18 +435,22 @@ async def _wait_button_signal(
             and stable_count >= required_ticks
         ):
             log.info(
-                "Done signal fired (cycled=%s) + %d stable tick(s) — response complete (len=%d)",
+                "Phase 2: Done signal fired (cycled=%s) + %d stable tick(s) — response complete (len=%d, elapsed=%.1fs)",
                 done_signal_cycled,
                 stable_count,
                 len(last_text),
+                elapsed,
             )
             break
 
-    if elapsed >= timeout:
+    phase2_elapsed = elapsed - phase2_start
+    if phase2_elapsed >= _STREAMING_TIMEOUT_S:
         log.warning(
-            "Button-signal response timed out after %ds (cycled=%s)",
-            timeout,
+            "Phase 2: Timeout after %.0fs (total elapsed=%.1fs, cycled=%s, len=%d)",
+            _STREAMING_TIMEOUT_S,
+            elapsed,
             done_signal_cycled,
+            len(last_text),
         )
 
     return last_text

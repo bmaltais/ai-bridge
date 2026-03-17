@@ -13,9 +13,12 @@ Exposes:
   GET  /session/status/{site}      — check session state
   POST /session/notify-login/{site} — signal login complete
   GET  /health                — liveness check
+  GET  /v1/health/detailed    — detailed session status for all sites
+  GET  /v1/metrics            — request/error/latency metrics for all sites
 """
 
 import io
+import time
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -69,6 +72,29 @@ app = FastAPI(title="ai-bridge proxy", lifespan=lifespan)
 async def health():
     return {"status": "ok"}
 
+@app.get("/v1/health/detailed")
+async def health_detailed():
+    """Return detailed session status for all initialized sites.
+    
+    Returns status (ready/logged-in/waiting) for each site.
+    """
+    result = {}
+    for site_name in site_manager._sessions.keys():
+        result[site_name] = site_manager.get_status(site_name)
+    return {"status": "ok", "sites": result}
+
+
+@app.get("/v1/metrics")
+async def metrics():
+    """Return request/error/latency metrics for all sites.
+    
+    Fast endpoint — returns aggregated counters (no blocking operations).
+    """
+    return {
+        "status": "ok",
+        "metrics": site_manager.get_metrics(),
+    }
+
 
 async def _run_diagnosis(page, sel: SiteSelectors | None = None) -> str:
     buf = io.StringIO()
@@ -89,6 +115,8 @@ async def debug_selectors_site(site: str):
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
@@ -103,6 +131,8 @@ async def debug_html_site(site: str):
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
@@ -152,6 +182,8 @@ async def debug_eval(site: str, body: EvalBody):
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     result = await site_session.page.evaluate(body.js)
     return {"site": site, "result": result}
@@ -166,6 +198,8 @@ async def debug_dismiss_modal(site: str):
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     page = site_session.page
     await page.keyboard.press("Escape")
@@ -211,6 +245,8 @@ async def debug_save_cookies(site: str):
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     await site_session.session.save_cookies()
     return {"status": "saved", "path": str(site_session.session._cookies_path)}
@@ -228,6 +264,8 @@ async def debug_find_text(
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
@@ -287,6 +325,8 @@ async def inspect_site(
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(status_code=503, detail=f"Session for {site!r} not ready")
@@ -348,18 +388,26 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
     The session is initialized on first use (may prompt for login in headed mode).
     """
     log.info("POST /v1/proxy site=%s prompt_len=%d", body.site, len(body.prompt))
+    start_time = time.time()
+    
     try:
         site_session = await site_manager.get(body.site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
 
     if await raw.is_disconnected():
         log.info(
             "Client disconnected after session init for site=%s — aborting", body.site
         )
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=499, detail="Client disconnected")
 
     if not site_session.is_ready:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(
             status_code=503, detail=f"Session for {body.site!r} not ready"
         )
@@ -421,6 +469,8 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
                     stable_threshold_ms=site_session.config.stable_threshold_ms,
                 )
                 last_exc = None
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                site_manager.record_request(body.site, elapsed_ms, error=False)
                 break  # success
 
             except Exception as exc:
@@ -438,6 +488,8 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
                         break  # no point retrying; caller gets 503
 
     if last_exc is not None:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(
             status_code=503,
             detail=f"Proxy failed after recovery attempt: {last_exc}",
@@ -460,6 +512,8 @@ async def get_capabilities(site: str):
     try:
         site_session = await site_manager.get(site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     caps = site_session.config.capabilities
     return {
@@ -494,6 +548,8 @@ async def control_capability(body: ControlRequest):
     try:
         site_session = await site_manager.get(body.site)
     except (FileNotFoundError, ValueError) as exc:
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=True)
         raise HTTPException(status_code=404, detail=str(exc))
     if not site_session.is_ready:
         raise HTTPException(
