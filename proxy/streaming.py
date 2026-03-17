@@ -39,11 +39,16 @@ _FALLBACK_TRIGGER_S = 5.0
 
 # How long to wait (s) for the submit button to go disabled after submission.
 # Fast responses may skip disabled state entirely — that's fine, we fall through.
-_BUTTON_DISABLE_WAIT_S = 5.0
+# 10s (was 5s): Grok's reasoning model ("Expert" mode) can take 5–10s of server-side
+# prep before starting to stream, so Regenerate may not disappear within 5s.
+_BUTTON_DISABLE_WAIT_S = 10.0
 
 # Stability ticks required after button re-enables before we return.
 # 2 ticks × POLL_INTERVAL_MS (200ms default) = 400ms — enough to catch a final
 # streaming burst without waiting a full STABLE_THRESHOLD_MS cycle.
+# NOTE: this constant is used as the fallback when the done signal never cycles.
+# When the done signal cycles (went absent → reappeared), only 1 tick is required
+# — the cycle is a hard binary signal; extra stability is redundant.
 _BUTTON_STABLE_TICKS = 2
 
 
@@ -168,6 +173,7 @@ async def wait_for_complete_response(
             input_sel,
             poll,
             timeout,
+            stable_ticks_needed=stable_ticks_needed,
         )
 
     # ---- Default: time-based stability path ----
@@ -246,6 +252,7 @@ async def _wait_button_signal(
     input_sel: str,
     poll: float,
     timeout: float,
+    stable_ticks_needed: int = _BUTTON_STABLE_TICKS,
 ) -> str:
     """Button/indicator-signal completion path.
 
@@ -254,8 +261,22 @@ async def _wait_button_signal(
     we fall through to Phase 2 immediately.
 
     Phase 2 (up to timeout): poll until the done signal fires AND the text has changed
-    from init_text AND _is_complete() passes AND _BUTTON_STABLE_TICKS stable reads.
-    This absorbs any final streaming burst that arrives just as the signal fires.
+    from init_text AND _is_complete() passes AND enough stable ticks.
+
+    Required stable ticks (adaptive):
+    - done signal CYCLED (went absent in Phase 1 or Phase 2, then reappeared):
+      1 tick — the cycle is a hard binary signal; extra stability is redundant.
+    - done signal NEVER cycled (pre-existing from a prior answer, skip_new_chat=true):
+      stable_ticks_needed (time-based fallback) — text stability is the primary gate.
+
+    Why: skip_new_chat=true keeps us on the same conversation page. The done_indicator
+    (e.g. Regenerate button) is pre-existing from the previous answer and starts
+    visible.  When Grok starts a new generation it removes the button; when done it
+    reappears.  If the button never cycled within _BUTTON_DISABLE_WAIT_S (slow-start
+    reasoning model), Phase 1 falls through and Phase 2 sees done=True from tick 1 —
+    so the only reliable gate is text stability.  When the button DID cycle, trusting
+    it immediately (1 tick) avoids a 120s timeout on long streaming responses where
+    stable_count never reaches 2 because text keeps changing throughout.
 
     Done signal priority: done_indicator visible > submit_button_enabled.
     x.com/i/grok uses done_indicator=button[aria-label="Regenerate"] because the
@@ -266,6 +287,7 @@ async def _wait_button_signal(
     using_fallback = False
     last_text = ""
     stable_count = 0
+    done_signal_cycled = False  # True once done signal is observed absent then present
 
     # --- Phase 1: detect generation start (done signal should be absent) ---
     phase1_elapsed = 0.0
@@ -277,16 +299,18 @@ async def _wait_button_signal(
                 "Done signal absent after %.1fs — generation confirmed started",
                 phase1_elapsed,
             )
+            done_signal_cycled = True  # went absent; will become present again when done
             break
     else:
         log.debug(
-            "Done signal never went absent in %.0fs — fast response or first message; "
-            "proceeding to Phase 2 anyway",
+            "Done signal never went absent in %.0fs — slow start or pre-existing signal; "
+            "will track cycle in Phase 2",
             _BUTTON_DISABLE_WAIT_S,
         )
     elapsed += phase1_elapsed
 
     # --- Phase 2: wait for generation end (done signal fires) ---
+    done_was_absent = done_signal_cycled  # already observed absent in Phase 1?
     while elapsed < timeout:
         await asyncio.sleep(poll)
         elapsed += poll
@@ -310,22 +334,40 @@ async def _wait_button_signal(
             stable_count = 0
             last_text = current
 
-        # Done signal fired + text stable: generation complete.
         done = await _is_done_signal(page, sel)
+
+        # Track cycle: absent → present = genuine new completion signal
+        if not done:
+            done_was_absent = True
+        elif done_was_absent and not done_signal_cycled:
+            done_signal_cycled = True
+            log.debug(
+                "Done signal cycled (absent → present) at %.1fs — trusting as genuine completion",
+                elapsed,
+            )
+
+        # Required ticks: 1 when signal is a genuine cycle; text-stability fallback otherwise.
+        required_ticks = 1 if done_signal_cycled else stable_ticks_needed
+
         if (
             done
             and _is_complete(last_text, extra_placeholders)
             and last_text != init_text
-            and stable_count >= _BUTTON_STABLE_TICKS
+            and stable_count >= required_ticks
         ):
             log.info(
-                "Done signal fired + text stable (%d ticks) — response complete (len=%d)",
+                "Done signal fired (cycled=%s) + %d stable tick(s) — response complete (len=%d)",
+                done_signal_cycled,
                 stable_count,
                 len(last_text),
             )
             break
 
     if elapsed >= timeout:
-        log.warning("Button-signal response timed out after %ds", timeout)
+        log.warning(
+            "Button-signal response timed out after %ds (cycled=%s)",
+            timeout,
+            done_signal_cycled,
+        )
 
     return last_text
