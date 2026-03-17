@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from proxy import inspector, lifecycle, scraper, streaming
 from proxy.config import settings
 from proxy.scraper import SiteSelectors
+from proxy.site_config import SiteConfig
 from proxy.site_session import SiteSession, SiteSessionManager
 
 _SITES_DIR = Path(__file__).parent / "sites"
@@ -363,6 +364,27 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
     """
     log.info("POST /v1/proxy site=%s prompt_len=%d", body.site, len(body.prompt))
     start_time = time.time()
+
+    # Fast-path: API-based providers (no browser, no Playwright)
+    try:
+        site_cfg = SiteConfig.find(body.site, _SITES_DIR)
+    except (FileNotFoundError, ValueError) as exc:
+        site_manager.record_request(body.site, int((time.time() - start_time) * 1000), error=True)
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    if site_cfg.provider_type == "api":
+        from proxy.adapters import openrouter as _openrouter
+        model_id = site_cfg.models.get(body.model or "", body.model or "openrouter/free")
+        try:
+            text = await _openrouter.query(model_id, body.prompt)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            site_manager.record_request(body.site, int((time.time() - start_time) * 1000), error=True)
+            raise HTTPException(status_code=503, detail=str(exc))
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        site_manager.record_request(body.site, elapsed_ms, error=False)
+        return {"site": body.site, "model": model_id, "text": text, "chat_url": None}
 
     try:
         site_session = await site_manager.get(body.site)

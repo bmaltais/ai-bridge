@@ -1,13 +1,13 @@
 ---
 name: ai-bridge
-description: Start, manage, and interact with ai-bridge — a Playwright-based local server that exposes Grok, Perplexity, ChatGPT, and other web LLM interfaces via a simple HTTP API. Use this skill when the user says "start ai-bridge", "start the proxy", "run the proxy", "proxy is down", "query perplexity", "query grok", "use a web LLM", "restart the proxy", "check proxy status", or "/proxy".
+description: Start, manage, and interact with ai-bridge — a Playwright-based local server that exposes Grok, Perplexity, ChatGPT, OpenRouter, and other LLM interfaces via a simple HTTP API. Use this skill when the user says "start ai-bridge", "start the proxy", "run the proxy", "proxy is down", "query perplexity", "query grok", "query openrouter", "use a web LLM", "use openrouter", "restart the proxy", "check proxy status", or "/proxy".
 ---
 
 # ai-bridge
 
-A local Playwright-based server that exposes web LLM chat interfaces through a simple HTTP API.
+A local server that exposes LLM interfaces through a simple HTTP API.
 Skills and agents call `POST /v1/proxy` to send prompts to any configured site.
-No API keys required — the proxy uses browser sessions (cookies) to authenticate.
+Most sites use browser sessions (cookies) for auth. **OpenRouter** is API-based — no browser needed, just an API key.
 
 ## Quick Start
 
@@ -129,6 +129,58 @@ curl -X POST http://127.0.0.1:8080/v1/proxy \
   -H "Content-Type: application/json" \
   -d "{\"site\": \"perplexity\", \"prompt\": \"What is 2+2?\"}"
 ```
+
+## OpenRouter (API Provider — No Browser)
+
+OpenRouter is configured as an **API provider** (`provider_type: api` in its YAML). No browser or cookies needed — it calls the OpenRouter REST API directly.
+
+### Setup
+
+Add your API key to `.env`:
+
+```ini
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+Get a free key at https://openrouter.ai/keys.
+
+### Usage
+
+```bash
+# Default: openrouter/free (no credits required — OpenRouter picks a free model)
+uv run python proxy/send.py openrouter "Your prompt here"
+
+# Specific free model
+uv run python proxy/send.py openrouter "Your prompt" --model llama-70b
+
+# Other free model aliases
+uv run python proxy/send.py openrouter "Your prompt" --model deepseek-r1
+uv run python proxy/send.py openrouter "Your prompt" --model gemma-27b
+```
+
+### Available model aliases (`proxy/sites/openrouter.yaml`)
+
+| Alias | Model |
+|---|---|
+| `free` | `openrouter/free` (default — auto-selected free model) |
+| `llama-70b` | `meta-llama/llama-3.3-70b-instruct:free` |
+| `llama-8b` | `meta-llama/llama-3.1-8b-instruct:free` |
+| `gemma-27b` | `google/gemma-3-27b-it:free` |
+| `gemma-12b` | `google/gemma-3-12b-it:free` |
+| `qwen-72b` | `qwen/qwen-2.5-72b-instruct:free` |
+| `mistral` | `mistralai/mistral-small-3.1-24b-instruct:free` |
+| `deepseek-r1` | `deepseek/deepseek-r1:free` |
+| `deepseek-v3` | `deepseek/deepseek-chat-v3-0324:free` |
+| `phi-4` | `microsoft/phi-4:free` |
+| `auto` | `openrouter/auto` (paid — requires credits) |
+
+You can also pass any raw OpenRouter model ID directly: `--model "mistralai/mistral-7b-instruct"`.
+
+### Notes
+
+- **Server restart required** when `openrouter.yaml` is added or modified — site configs are loaded at request time but the server process must be restarted to pick up newly added YAML files.
+- Free models may have rate limits (429). Retry after a few seconds or switch model aliases.
+- `openrouter/auto` routes to the best paid model — requires account credits.
 
 ## Debugging
 

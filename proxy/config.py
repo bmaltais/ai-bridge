@@ -15,5 +15,8 @@ class Settings(BaseSettings):
     stable_threshold_ms: int = 1500
     response_timeout_s: int = 120
 
+    # OpenRouter API key (https://openrouter.ai/keys)
+    openrouter_api_key: str = ""
+
 
 settings = Settings()
