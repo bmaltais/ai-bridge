@@ -16,6 +16,7 @@ Examples:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -37,14 +38,20 @@ def _is_healthy(host: str, port: int) -> bool:
 def _start_bridge(host: str, port: int) -> bool:
     """Start the bridge as a detached background process; wait up to 20s."""
     print("ai-bridge not running — starting it...", file=sys.stderr)
+    log_dir = Path.home() / ".claude" / "ai-bridge"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_f = open(log_dir / "proxy.log", "a")
+    env = {**os.environ, "WATCHDOG_PID": "1"}  # PID 1 disables watchdog → persistent bridge
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
     subprocess.Popen(
         ["uv", "run", "python", "-m", "proxy.main"],
         cwd=str(_SKILL_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        env=env,
         creationflags=flags,
     )
     deadline = time.time() + 20

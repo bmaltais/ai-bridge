@@ -55,6 +55,7 @@ def _start_bridge(port: int) -> subprocess.Popen:
     log_f = open(_LOG_FILE, "a")
     env = os.environ.copy()
     env["PORT"] = str(port)
+    env["WATCHDOG_PID"] = "1"  # PID 1 disables watchdog → persistent bridge
 
     # DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP: survive parent exit on Windows.
     # Falls back to close_fds=True on non-Windows.
