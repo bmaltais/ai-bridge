@@ -49,16 +49,21 @@ def _is_running(port: int) -> bool:
         return False
 
 
+def _pythonw() -> str:
+    """Return pythonw.exe path (no console window) or fall back to sys.executable."""
+    exe = Path(sys.executable)
+    pw = exe.parent / exe.name.replace("python", "pythonw")
+    return str(pw) if pw.exists() else sys.executable
+
+
 def _start_bridge(port: int) -> subprocess.Popen:
-    """Spawn the bridge server as a detached background process."""
+    """Spawn the bridge server as a background process (no console window)."""
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_f = open(_LOG_FILE, "a")
     env = os.environ.copy()
     env["PORT"] = str(port)
     env["WATCHDOG_PID"] = "1"  # PID 1 disables watchdog → persistent bridge
 
-    # DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP: survive parent exit on Windows.
-    # Falls back to close_fds=True on non-Windows.
     popen_kwargs: dict = {
         "cwd": str(_BRIDGE_ROOT),
         "stdout": log_f,
@@ -66,15 +71,11 @@ def _start_bridge(port: int) -> subprocess.Popen:
         "stdin": subprocess.DEVNULL,
         "env": env,
     }
-    if sys.platform == "win32":
-        popen_kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-        )
-    else:
+    if sys.platform != "win32":
         popen_kwargs["start_new_session"] = True
 
     return subprocess.Popen(
-        ["uv", "run", "python", "-m", "proxy.main"],
+        [_pythonw(), "-m", "proxy.main"],
         **popen_kwargs,
     )
 

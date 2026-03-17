@@ -35,34 +35,53 @@ def _is_healthy(host: str, port: int) -> bool:
         return False
 
 
+def _pythonw() -> str:
+    """Return pythonw.exe path (no console window) or fall back to sys.executable."""
+    exe = Path(sys.executable)
+    pw = exe.parent / exe.name.replace("python", "pythonw")
+    return str(pw) if pw.exists() else sys.executable
+
+
 def _start_bridge(host: str, port: int) -> bool:
-    """Start the bridge as a detached background process; wait up to 20s."""
+    """Start the bridge as a background process; wait up to 20s."""
     print("ai-bridge not running — starting it...", file=sys.stderr)
     log_dir = Path.home() / ".claude" / "ai-bridge"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_f = open(log_dir / "proxy.log", "a")
     env = {**os.environ, "WATCHDOG_PID": "1"}  # PID 1 disables watchdog → persistent bridge
-    flags = 0
-    if sys.platform == "win32":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
     subprocess.Popen(
-        ["uv", "run", "python", "-m", "proxy.main"],
+        [_pythonw(), "-m", "proxy.main"],
         cwd=str(_SKILL_ROOT),
         stdout=log_f,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         env=env,
-        creationflags=flags,
     )
     deadline = time.time() + 20
     interval = 0.5
     while time.time() < deadline:
         if _is_healthy(host, port):
             print(f"ai-bridge ready at http://{host}:{port}", file=sys.stderr)
+            _launch_tray(host, port)
             return True
         time.sleep(interval)
         interval = min(interval * 1.3, 2.0)
     return False
+
+
+def _launch_tray(host: str, port: int) -> None:
+    """Launch the GUI status monitor (fire-and-forget)."""
+    tray_script = _SKILL_ROOT / "proxy" / "tray.py"
+    if not tray_script.exists():
+        return
+    try:
+        subprocess.Popen(
+            [_pythonw(), str(tray_script), "--host", host, "--port", str(port)],
+            cwd=str(_SKILL_ROOT),
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass  # tray is best-effort
 
 
 def main() -> None:
