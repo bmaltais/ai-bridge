@@ -296,9 +296,18 @@ async def invoke_capability(
     # Route known capabilities to existing helpers
     if cap_name == "new_chat":
         sel = SiteSelectors.from_config(site_config)
-        # Navigate to site_config.url rather than calling start_new_chat() — avoids
-        # the origin-fallback bug where start_new_chat() navigates to https://x.com
-        # (site root) instead of https://x.com/i/grok (the actual chat URL).
+        # Skip navigation if chat input is already present on the target URL
+        # (e.g. right after _launch_with_cookies navigated here).
+        try:
+            el = await page.wait_for_selector(sel.chat_input, timeout=2_000)
+            if el and site_config.url.rstrip("/") in page.url:
+                log.debug(
+                    "new_chat: already on %s with chat input — skipping reload",
+                    page.url,
+                )
+                return
+        except Exception:
+            pass
         log.info("new_chat: navigating to %s", site_config.url)
         await page.goto(site_config.url, wait_until="domcontentloaded", timeout=30_000)
         await page.wait_for_selector(sel.chat_input, timeout=15_000)
