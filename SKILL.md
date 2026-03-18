@@ -12,7 +12,7 @@ Most sites use browser sessions (cookies) for auth. **OpenRouter** is API-based 
 ## Quick Start
 
 ```bash
-cd C:/Users/berna/.claude/skills/ai-bridge
+cd ~/.claude/skills/ai-bridge
 
 # First time: install deps + browsers
 uv sync
