@@ -42,7 +42,6 @@ class BridgeMonitor:
         self.root.configure(bg=BG)
         self.root.geometry("240x120")
         self.root.resizable(False, False)
-        self.root.attributes("-topmost", True)
 
         # Remove default icon, use a minimal titlebar
         try:
@@ -55,6 +54,9 @@ class BridgeMonitor:
         x = self.root.winfo_screenwidth() - 260
         y = self.root.winfo_screenheight() - 180
         self.root.geometry(f"+{x}+{y}")
+
+        # Start minimized to taskbar — visible but not in the way
+        self.root.iconify()
 
         # Main frame
         frame = tk.Frame(self.root, bg=BG, padx=12, pady=8)
@@ -74,9 +76,9 @@ class BridgeMonitor:
         # Info row
         info = tk.Frame(frame, bg=BG)
         info.pack(fill="x", pady=(2, 0))
-        tk.Label(
-            info, text=f":{port}", font=("Consolas", 9), bg=BG, fg=FG_DIM
-        ).pack(side="left")
+        tk.Label(info, text=f":{port}", font=("Consolas", 9), bg=BG, fg=FG_DIM).pack(
+            side="left"
+        )
         self.uptime_var = tk.StringVar(value="0s")
         tk.Label(
             info, textvariable=self.uptime_var, font=("Consolas", 9), bg=BG, fg=FG_DIM
@@ -161,9 +163,12 @@ def _pid_alive(pid: int) -> bool:
     """Check if a PID is still running."""
     if sys.platform == "win32":
         import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         STILL_ACTIVE = 259
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        )
         if not handle:
             return False
         exit_code = ctypes.c_ulong()

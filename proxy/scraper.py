@@ -240,7 +240,22 @@ async def select_model(page: Page, model_label: str, model_selector: str) -> boo
 
 
 async def start_new_chat(page: Page, sel: SiteSelectors = _DEFAULT) -> None:
-    """Navigate to a fresh chat so there is no context carry-over."""
+    """Navigate to a fresh chat so there is no context carry-over.
+
+    Skips navigation if the page already has a blank chat input ready
+    (e.g. right after browser launch with cookies — avoids a redundant reload).
+    """
+    # Fast path: chat input already present and page is on the site → skip reload.
+    try:
+        el = await page.wait_for_selector(sel.chat_input, timeout=2_000)
+        if el:
+            log.debug(
+                "start_new_chat: chat input already present — skipping navigation"
+            )
+            return
+    except Exception:
+        pass
+
     try:
         loc = page.locator(sel.new_chat).first
         await loc.wait_for(state="visible", timeout=5_000)
