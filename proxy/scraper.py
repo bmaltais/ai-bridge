@@ -11,10 +11,27 @@ function; omit it to use the generic fallback chain.
 Run with HEADLESS=false to inspect selectors in a visible browser.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+if TYPE_CHECKING:
+    from playwright.async_api import Page
+
+# Lazy import — resolved on first use to avoid ~100-300ms import cost at server boot.
+_PlaywrightTimeoutError = None
+
+
+def _timeout_error():
+    global _PlaywrightTimeoutError
+    if _PlaywrightTimeoutError is None:
+        from playwright.async_api import TimeoutError as _PTE
+
+        _PlaywrightTimeoutError = _PTE
+    return _PlaywrightTimeoutError
+
 
 log = logging.getLogger(__name__)
 
@@ -229,7 +246,7 @@ async def start_new_chat(page: Page, sel: SiteSelectors = _DEFAULT) -> None:
         await loc.wait_for(state="visible", timeout=5_000)
         await loc.click()
         await page.wait_for_selector(sel.chat_input, timeout=30_000)
-    except PlaywrightTimeoutError:
+    except _timeout_error():
         # Navigate to the site root rather than reloading — avoids landing on
         # an OAuth redirect URL that may not have the chat input.
         origin = "/".join(page.url.split("/")[:3])

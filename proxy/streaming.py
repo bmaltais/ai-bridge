@@ -22,10 +22,14 @@ switch to a DOM scan — find the last leaf element with >100 chars of text insi
 the <main> container.  This survives hashed CSS class changes (e.g. x.com deploys).
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Page
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 from proxy import scraper
 from proxy.config import settings
@@ -204,7 +208,10 @@ async def wait_for_complete_response(
     phase1_complete = False  # True once we've seen first real content
 
     # --- Phase 1: Wait for first real (non-placeholder) content to arrive ---
-    log.debug("Phase 1 (TEXT_ARRIVAL): waiting up to %.0fs for first real content", _TEXT_ARRIVAL_TIMEOUT_S)
+    log.debug(
+        "Phase 1 (TEXT_ARRIVAL): waiting up to %.0fs for first real content",
+        _TEXT_ARRIVAL_TIMEOUT_S,
+    )
     while elapsed < _TEXT_ARRIVAL_TIMEOUT_S:
         await asyncio.sleep(poll)
         elapsed += poll
@@ -242,7 +249,10 @@ async def wait_for_complete_response(
         )
 
     # --- Phase 2: Wait for text stability and final completion ---
-    log.debug("Phase 2 (STREAMING): waiting up to %.0fs for text stability", _STREAMING_TIMEOUT_S)
+    log.debug(
+        "Phase 2 (STREAMING): waiting up to %.0fs for text stability",
+        _STREAMING_TIMEOUT_S,
+    )
     stable_count = 0
     phase2_start = elapsed
 
@@ -365,7 +375,10 @@ async def _wait_button_signal(
     done_signal_cycled = False  # True once done signal is observed absent then present
 
     # --- Phase 1: detect generation start (done signal should be absent) ---
-    log.debug("Phase 1 (BUTTON_DISABLE): waiting up to %.0fs for done signal to go absent", _BUTTON_DISABLE_WAIT_S)
+    log.debug(
+        "Phase 1 (BUTTON_DISABLE): waiting up to %.0fs for done signal to go absent",
+        _BUTTON_DISABLE_WAIT_S,
+    )
     phase1_elapsed = 0.0
     while phase1_elapsed < _BUTTON_DISABLE_WAIT_S:
         await asyncio.sleep(poll)
@@ -375,7 +388,9 @@ async def _wait_button_signal(
                 "Phase 1: Done signal absent after %.1fs — generation confirmed started",
                 phase1_elapsed,
             )
-            done_signal_cycled = True  # went absent; will become present again when done
+            done_signal_cycled = (
+                True  # went absent; will become present again when done
+            )
             break
     else:
         log.debug(
@@ -386,7 +401,10 @@ async def _wait_button_signal(
     elapsed += phase1_elapsed
 
     # --- Phase 2: wait for generation end (done signal fires) ---
-    log.debug("Phase 2 (STREAMING): waiting up to %.0fs for done signal to fire", _STREAMING_TIMEOUT_S)
+    log.debug(
+        "Phase 2 (STREAMING): waiting up to %.0fs for done signal to fire",
+        _STREAMING_TIMEOUT_S,
+    )
     done_was_absent = done_signal_cycled  # already observed absent in Phase 1?
     phase2_start = elapsed
 

@@ -48,11 +48,33 @@ CHAT_INPUT_SELECTOR = (
 # --disable-blink-features=AutomationControlled : suppress bot-detection signals.
 # --disable-features=ExternalProtocolDialog     : prevent Windows "Open in X app" / Store
 #     redirects when navigating to x.com or other sites with registered app protocol handlers.
+#
+# Speed flags: disable subsystems unused in automation to cut ~300-800ms off cold launch.
+# NOTE: --disable-extensions and --disable-default-apps are intentionally ABSENT —
+# Patchright removes them to avoid bot detection.
 _CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-features=ExternalProtocolDialog",
+    # --- startup speed ---
+    "--disable-gpu",
+    "--no-first-run",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-translate",
+    "--disable-client-side-phishing-detection",
+    "--disable-hang-monitor",
+    "--disable-renderer-backgrounding",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-ipc-flooding-protection",
+    "--disable-domain-reliability",
+    "--disable-breakpad",
+    "--metrics-recording-only",
+    "--safebrowsing-disable-auto-update",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--force-color-profile=srgb",
+    "--enable-features=NetworkService,NetworkServiceInProcess",
 ]
-
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +291,9 @@ class BrowserSession:
 
             target = chat_url or self._url
             try:
-                await self._page.goto(target, wait_until="domcontentloaded", timeout=15000)
+                await self._page.goto(
+                    target, wait_until="domcontentloaded", timeout=15000
+                )
                 if await self.is_healthy():
                     log.info("Session recovered via navigation to %s", target)
                     return True
@@ -364,7 +388,6 @@ class BrowserSession:
 
         await self.save_cookies()
         log.info("Session saved to %s", self._cookies_path)
-
 
     async def _close_browser(self) -> None:
         if self._context:

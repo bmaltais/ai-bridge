@@ -5,12 +5,16 @@ Manages one BrowserSession per site, initializing lazily on first request.
 Sessions persist for the lifetime of the server process.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Page
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 from proxy.browser import BrowserSession
 from proxy.site_config import SiteConfig
@@ -151,7 +155,9 @@ class SiteSessionManager:
             "initialized": False,
         }
 
-    def record_request(self, site_name: str, latency_ms: int, error: bool = False) -> None:
+    def record_request(
+        self, site_name: str, latency_ms: int, error: bool = False
+    ) -> None:
         """Record a request metric for a site (non-blocking, threadlocal counter update)."""
         key = self._resolve_key(site_name)
         if key not in self._metrics:

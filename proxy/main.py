@@ -72,10 +72,11 @@ app = FastAPI(title="ai-bridge proxy", lifespan=lifespan)
 async def health():
     return {"status": "ok"}
 
+
 @app.get("/v1/health/detailed")
 async def health_detailed():
     """Return detailed session status for all initialized sites.
-    
+
     Returns status (ready/logged-in/waiting) for each site.
     """
     result = {}
@@ -87,7 +88,7 @@ async def health_detailed():
 @app.get("/v1/metrics")
 async def metrics():
     """Return request/error/latency metrics for all sites.
-    
+
     Fast endpoint — returns aggregated counters (no blocking operations).
     """
     return {
@@ -389,7 +390,7 @@ async def proxy_prompt(body: ProxyRequest, raw: Request):
     """
     log.info("POST /v1/proxy site=%s prompt_len=%d", body.site, len(body.prompt))
     start_time = time.time()
-    
+
     try:
         site_session = await site_manager.get(body.site)
     except (FileNotFoundError, ValueError) as exc:
@@ -611,7 +612,16 @@ def run():
         log.info("No valid watchdog PID — proxy will run until manually stopped.")
 
     log.info("Proxy ready on http://%s:%d", host, port)
-    uvicorn.run("proxy.main:app", host=host, port=port, log_level="info")
+    uvicorn.run(
+        "proxy.main:app",
+        host=host,
+        port=port,
+        log_level="info",
+        # Explicit settings — skip auto-detection overhead (~30-150ms).
+        lifespan="on",
+        interface="asgi3",
+        ws="none",  # no WebSocket routes
+    )
 
 
 if __name__ == "__main__":
